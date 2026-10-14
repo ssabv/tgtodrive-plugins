@@ -31,8 +31,8 @@ PLUGIN_MANIFEST = {
         "layout": "stack",
             "components": [
             {"type": "alert",
-             "text": "订阅：输入关键词 →「搜索 TMDB」→ 运行日志里点「➕ 订阅」。
-定时：OpenAPI Token 必填（填一次自动保存）；定时任务表达式 */30 * * * *，参数留空。",
+             "text": "订阅：输入关键词 →「搜索 TMDB」→ 运行日志里点「➕ 订阅」。\n"
+             "\n定时：OpenAPI Token 必填（填一次自动保存）；定时任务表达式 */30 * * * *，参数留空。",
              "style": {"tone": "muted"}},
             {"type": "field", "name": "search_query"},
             {"type": "grid", "columns": 2, "children": [
