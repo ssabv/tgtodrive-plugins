@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.9.5",
+    "version": "1.9.6",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -622,8 +622,8 @@ def _handle_remove(params, store, data_dir):
 
 
 def _find_still(obj):
-    """深度查找剧集剧照（still_path），找不到再退回海报。"""
-    for want in ("still", "poster"):
+    """深度查找图片：剧照 → 横版剧照(backdrop) → 海报。"""
+    for want in ("still", "backdrop", "poster"):
         def walk(node):
             if isinstance(node, dict):
                 for key, val in node.items():
@@ -745,7 +745,7 @@ def _resolve_season(base_url, token, tmdb_id, episode, cache,
 
 def _fetch_still(base_url, token, tmdb_id, season, episode, cache,
                  tmdb_key=None, proxies=None):
-    """取该集剧照：主程序季集接口 → TMDB 官方 API → 退海报。"""
+    """取图：该集剧照 → 剧集横版照(backdrop) → 海报。"""
     key = f"{tmdb_id}:{season}:{episode}"
     if key in cache:
         return cache[key]
@@ -780,6 +780,9 @@ def _fetch_still(base_url, token, tmdb_id, season, episode, cache,
                               f"/tv/{tmdb_id}/season/{season}", proxies))
                 if url:
                     print(f"剧照：来自 TMDB（S{season:02d}E{episode:02d}）")
+                else:
+                    print(f"剧照：S{season:02d}E{episode:02d} 无剧照，"
+                          f"回退剧集图")
             except Exception as exc:  # noqa: BLE001
                 print(f"剧照：TMDB API 失败（{exc}）")
     if url is None:
