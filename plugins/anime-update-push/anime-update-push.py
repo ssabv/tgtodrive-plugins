@@ -22,8 +22,8 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.6.1",
-    "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。零配置：凭据与运行设置全存插件数据目录，定时计划参数全部留空。",
+    "version": "1.7.0",
+    "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
     "ui": {
@@ -31,38 +31,143 @@ PLUGIN_MANIFEST = {
         "layout": "stack",
             "components": [
             {"type": "alert",
-             "text": "首次使用：复制你的 OpenAPI Token（tgto_ 开头），贴进下方输入框点「🔑 保存凭据」，一次即可。之后：输入番名点「🔍 搜索 TMDB」→ 结果页「➕ 订阅」；配置点「⚙️ 查看配置」。定时计划参数全部留空。",
+             "text": "选番：输入关键词点「搜索 TMDB」→ 结果页点海报下「➕ 订阅」。点「试推送」验证渠道。定时计划：填好配置点「💾 保存配置」，计划参数全部留空即可共享这份配置。",
              "style": {"tone": "muted"}},
-            {"type": "field", "name": "cmd",
-             "help": "首次：贴 Token（tgto_ 开头）点「保存凭据」；日常：输番名点搜索、贴配置 JSON 点「应用配置」；定时计划：此框必须留空。"},
-            {"type": "grid", "columns": 2, "children": [
+            {"type": "field", "name": "search_query"},
+            {"type": "grid", "columns": 3, "children": [
                 {"type": "button", "label": "🔍 搜索 TMDB", "action": "run",
+                 "params": {"mode": "search"},
                  "style": {"tone": "primary"}},
                 {"type": "button", "label": "▶️ 检测更新", "action": "run",
-                 "params": {"cmd": "{\"mode\": \"run\"}"},
+                 "params": {"mode": "run"},
                  "style": {"tone": "success"}},
-            ]},
-            {"type": "grid", "columns": 4, "children": [
                 {"type": "button", "label": "📢 试推送", "action": "run",
-                 "params": {"cmd": "{\"mode\": \"test_push\"}"},
+                 "params": {"mode": "test_push"},
                  "style": {"tone": "warning"}},
-                {"type": "button", "label": "⚙️ 查看配置", "action": "run",
-                 "params": {"cmd": "{\"mode\": \"show_config\"}"},
-                 "style": {"tone": "muted", "variant": "outline"}},
-                {"type": "button", "label": "💾 应用配置", "action": "run",
+            ]},
+            {"type": "grid", "columns": 3, "children": [
+                {"type": "button", "label": "💾 保存当前配置（供定时计划共享）",
+                 "action": "run", "params": {"mode": "save_config"},
                  "style": {"tone": "primary", "variant": "outline"}},
-                {"type": "button", "label": "🔑 保存凭据", "action": "run",
-                 "style": {"tone": "danger", "variant": "outline"}},
+                {"type": "button", "label": "⏳ 查看待推送", "action": "run",
+                 "params": {"mode": "run"},
+                 "style": {"tone": "muted", "variant": "outline"}},
             ]},
         ],
     },
     "inputs": [
         {
-            "name": "cmd",
-            "label": "内部指令（定时计划留空）",
+            "name": "api_base_url",
+            "label": "服务地址",
+            "type": "text",
+            "default": "http://127.0.0.1:12366",
+            "help": "容器内可达的本服务地址；与运行接口同容器时用默认值即可。留空则读环境变量。",
+        },
+        {
+            "name": "openapi_token",
+            "label": "OpenAPI Token",
+            "type": "password",
+            "default": "",
+            "help": "在「实用工具 → OpenAPI」创建。可填在这里，也可配置环境变量，或在插件数据目录放 openapi.json。",
+        },
+        {
+            "name": "mode",
+            "label": "操作模式",
+            "type": "select",
+            "default": "run",
+            "options": [
+                {"label": "正常检测更新", "value": "run"},
+                {"label": "搜索 TMDB 选番", "value": "search"},
+                {"label": "添加订阅", "value": "add"},
+                {"label": "取消订阅", "value": "remove"},
+                {"label": "试推送", "value": "test_push"},
+                {"label": "保存当前配置", "value": "save_config"},
+            ],
+            "help": "一般不用手动改：用表单/结果页按钮操作即可。",
+        },
+        {
+            "name": "search_query",
+            "label": "TMDB 搜索关键词",
+            "type": "text",
+            "default": "",
+            "placeholder": "输入番名后点「搜索 TMDB」按钮",
+        },
+        {
+            "name": "add_tmdb_id",
+            "label": "待添加 TMDB ID",
+            "type": "text",
+            "default": "",
+        },
+        {
+            "name": "add_title",
+            "label": "待添加标题",
+            "type": "text",
+            "default": "",
+        },
+        {
+            "name": "remove_key",
+            "label": "待移除订阅键",
+            "type": "text",
+            "default": "",
+        },
+        {
+            "name": "days",
+            "label": "检查最近几天",
+            "type": "number",
+            "default": 1,
+            "min": 1,
+            "max": 7,
+            "help": "检查最近 N 天的日历更新（含今天），防止错过。已推送过的不会重复推。",
+        },
+        {
+            "name": "kind",
+            "label": "日历类型",
+            "type": "text",
+            "default": "",
+            "placeholder": "留空取全部",
+            "help": "日历接口的 kind 筛选值，留空不过滤。",
+        },
+        {
+            "name": "minute_level",
+            "label": "分钟级到点推送",
+            "type": "boolean",
+            "default": True,
+            "help": "日历条目带播出时刻（如 22:40）时，到点才推；没到点显示等待。条目无时间则日历出现即推。",
+        },
+        {
+            "name": "tz_offset",
+            "label": "时间校正（小时）",
+            "type": "number",
+            "default": 0,
+            "help": "若推送时机明显偏早/偏晚，用此项加减小时数校正（如 -8、+1）。一般保持 0。",
+        },
+        {
+            "name": "push_channels",
+            "label": "推送渠道（可多选）",
+            "type": "multiselect",
+            "default": ["tg", "feishu", "webhook"],
+            "options": [
+                {"label": "Telegram（主程序机器人）", "value": "tg"},
+                {"label": "飞书 Webhook", "value": "feishu"},
+                {"label": "通用 Webhook", "value": "webhook"},
+            ],
+            "help": "只勾选的渠道会收到推送；对应渠道需先填好下方地址。用「试推送」按钮验证。",
+        },
+        {
+            "name": "feishu_webhook",
+            "label": "飞书 Webhook（每行一个）",
             "type": "textarea",
             "default": "",
-            "help": "插件页：输入番名点「搜索 TMDB」，或贴配置 JSON 点「应用配置」。定时计划：此框必须留空。",
+            "placeholder": "https://open.feishu.cn/open-apis/bot/v2/hook/xxxx",
+            "help": "飞书群自定义机器人 Webhook 地址，支持多个。",
+        },
+        {
+            "name": "generic_webhooks",
+            "label": "通用 Webhook（每行一个）",
+            "type": "textarea",
+            "default": "",
+            "placeholder": "https://example.com/hook",
+            "help": "POST JSON：{plugin, event, title, text, updates}。支持多个，可自行适配 n8n / Bark / Server酱 等。",
         },
     ],
 }
@@ -104,11 +209,8 @@ def _api_call(base_url, token, method, path, **kwargs):
     return resp
 
 
-DEFAULT_BASE_URL = "http://127.0.0.1:12366"
-
-
 def _resolve_api_config(params, data_dir):
-    """凭据优先级：环境变量 > data_dir/openapi.json（表单不再承载凭据）。"""
+    """凭据优先级：表单 > 环境变量 > data_dir/openapi.json。"""
     base_url = (params.get("api_base_url") or "").strip()
     token = (params.get("openapi_token") or "").strip()
     if not base_url:
@@ -124,12 +226,10 @@ def _resolve_api_config(params, data_dir):
             token = token or str(cfg.get("token") or "").strip()
         except (OSError, ValueError):
             pass
-    if not base_url:
-        base_url = DEFAULT_BASE_URL
-    if not token:
+    if not base_url or not token:
         raise ValueError(
-            "缺少 OpenAPI Token：请先在插件页点「🔑 保存凭据」按钮"
-            "（或在插件数据目录放 openapi.json / 配置环境变量 TGTO_OPENAPI_TOKEN）"
+            "缺少服务地址或 OpenAPI Token：请在表单填写，或配置环境变量，"
+            "或在插件数据目录放 openapi.json"
         )
     return base_url.rstrip("/"), token
 
@@ -299,28 +399,23 @@ def _send_webhooks(urls, text, payload):
     return ok
 
 
-def _as_list(v):
-    if isinstance(v, list):
-        return [str(x).strip() for x in v if str(x).strip()]
-    return _split_lines(v)
-
-
 def _dispatch(params, base_url, token, title, text, updates, event):
-    """按配置渠道推送，返回 {渠道: 成功数}。"""
-    channels = _as_list(params.get("push_channels")) or \
-        ["tg", "feishu", "webhook"]
+    """按勾选渠道推送，返回 {渠道: 成功数}。"""
+    channels = params.get("push_channels") or []
+    if isinstance(channels, str):
+        channels = [channels] if channels else []
     results = {}
     if "tg" in channels:
         pairs = _resolve_bot(base_url, token)
         results["tg"] = (_send_tg(pairs, text, _resolve_proxy(base_url, token))
                          if pairs else 0)
     if "feishu" in channels:
-        urls = _as_list(params.get("feishu_webhook"))
+        urls = _split_lines(params.get("feishu_webhook"))
         results["feishu"] = _send_feishu(urls, text) if urls else 0
         if not urls:
             print("飞书：未配置 Webhook 地址，跳过")
     if "webhook" in channels:
-        urls = _as_list(params.get("generic_webhooks"))
+        urls = _split_lines(params.get("generic_webhooks"))
         if urls:
             payload = {"plugin": "anime-update-push", "event": event,
                        "title": title, "text": text, "updates": updates}
@@ -385,9 +480,7 @@ def _render_subs_ui(store):
                            "style": {"tone": "muted", "size": "small"}},
                           {"type": "button", "label": "🗑 移除订阅",
                            "action": "run",
-                           "params": {"cmd": json.dumps(
-                               {"mode": "remove", "remove_key": key},
-                               ensure_ascii=False)},
+                           "params": {"mode": "remove", "remove_key": key},
                            "style": {"tone": "danger", "variant": "outline"}},
                       ]})
     for i in range(0, len(cards), 3):
@@ -455,14 +548,13 @@ def _handle_search(base_url, token, params, store):
              {"type": "text", "text": "🎬 " + c["title"],
               "style": {"align": "center"}}),
             {"type": "button", "label": "➕ 订阅", "action": "run",
-             "params": {"cmd": json.dumps(
-                 {"mode": "add", "add_tmdb_id": str(c["tmdb_id"]),
-                  "add_title": c["title"]}, ensure_ascii=False)},
+             "params": {"mode": "add", "add_tmdb_id": str(c["tmdb_id"]),
+                        "add_title": c["title"]},
              "style": {"tone": "primary"}},
         ]
         comps.append({"type": "card", "label": c["title"], "children": card})
-    comps.append({"type": "button", "label": "🔍 用输入框关键词再搜一次",
-                  "action": "run",
+    comps.append({"type": "button", "label": "🔍 用表单关键词再搜一次",
+                  "action": "run", "params": {"mode": "search"},
                   "style": {"tone": "primary"}})
     return {"summary": {"mode": "search", "query": q, "results": len(results)},
             "ui": comps + _render_subs_ui(store)}
@@ -495,10 +587,10 @@ def _handle_remove(params, store, data_dir):
                     "style": {"tone": "muted"}}] + _render_subs_ui(store)}
 
 
-def _handle_test_push(params, cfg, base_url, token):
+def _handle_test_push(params, eff, base_url, token):
     text = "📢 追剧推送测试\n\n这是一条测试消息，收到即渠道配置正确。\n" \
            + time.strftime("%Y-%m-%d %H:%M:%S")
-    results = _dispatch(cfg, base_url, token, "追剧推送测试", text, [],
+    results = _dispatch(eff, base_url, token, "追剧推送测试", text, [],
                         "test")
     rows = [[ch, f"{n} 条成功" if n else "未发送/失败",
              "✅" if n else "⚠️"] for ch, n in results.items()] or \
@@ -630,182 +722,50 @@ def _collect_calendar_entries(obj, entries, ctx=None, depth=0):
             _collect_calendar_entries(item, entries, ctx, depth + 1)
 
 
-CONFIG_DEFAULTS = {
-    "days": 1, "kind": "", "minute_level": True, "tz_offset": 0,
-    "push_channels": ["tg", "feishu", "webhook"],
-    "feishu_webhook": [], "generic_webhooks": [],
-}
-
-
-def _normalize_json_text(s):
-    """容错归一化：全角/智能引号与标点 → ASCII，去掉尾逗号。"""
-    s = (s.replace("\u201c", '"').replace("\u201d", '"')
-          .replace("\u201e", '"').replace("\uff02", '"')
-          .replace("\u2018", "'").replace("\u2019", "'")
-          .replace("\uff0c", ",")   # ，
-          .replace("\uff1a", ":")   # ：
-          .replace("\u3001", ",")   # 、
-          )
-    s = re.sub(r",\s*([}\]])", r"\1", s)  # 尾逗号
-    return s
-
-
-def _merge_config(cfg, raw):
-    """解析并校验用户提交的配置 JSON，合并返回新配置。"""
-    try:
-        patch = json.loads(_normalize_json_text(raw))
-        if not isinstance(patch, dict):
-            raise ValueError("必须是 JSON 对象")
-    except ValueError as exc:
-        raise ValueError(
-            f"配置 JSON 解析失败：{exc}（常见原因：输入法把引号/逗号"
-            "转成了中文全角符号，可重新用英文标点粘贴）")
-    new = dict(cfg)
-    for k, v in patch.items():
-        if k == "days":
-            if not isinstance(v, int) or not 1 <= v <= 7:
-                raise ValueError("days 必须是 1-7 的整数")
-        elif k == "minute_level":
-            if not isinstance(v, bool):
-                raise ValueError("minute_level 必须是 true/false")
-        elif k in ("tz_offset",):
-            if not isinstance(v, (int, float)):
-                raise ValueError("tz_offset 必须是数字")
-        elif k == "kind":
-            if not isinstance(v, str):
-                raise ValueError("kind 必须是字符串")
-        elif k == "push_channels":
-            bad = [c for c in _as_list(v) if c not in ("tg", "feishu", "webhook")]
-            if bad:
-                raise ValueError(f"push_channels 含未知渠道：{bad}")
-        elif k in ("feishu_webhook", "generic_webhooks"):
-            if _as_list(v) and not all(
-                str(u).startswith("http") for u in _as_list(v)
-            ):
-                raise ValueError(f"{k} 里的地址必须以 http 开头")
-        else:
-            raise ValueError(f"未知配置字段：{k}")
-        new[k] = v
-    return new
-
-
-def _handle_show_config(cfg):
-    current = {**CONFIG_DEFAULTS, **cfg}
-    presets = [
-        ("只推 TG", '["tg"]'), ("只推飞书", '["feishu"]'),
-        ("只推 Webhook", '["webhook"]'), ("全渠道", '["tg","feishu","webhook"]'),
-    ]
-    comps = [{"type": "heading", "text": "当前配置"},
-             {"type": "code", "text": json.dumps(current, ensure_ascii=False, indent=2)},
-             {"type": "alert",
-              "text": "改配置两种方式：① 点下面预设按钮一键切换渠道；② 把上面 JSON 复制到上方输入框，改好后点「💾 应用配置」。",
-              "style": {"tone": "muted"}},
-             {"type": "grid", "columns": 4, "children": [
-                 {"type": "button", "label": label, "action": "run",
-                  "params": {"cmd": json.dumps(
-                      {"mode": "apply_config", "config_json":
-                       '{"push_channels": ' + channels}, ensure_ascii=False)},
-                  "style": {"tone": "primary", "variant": "outline"}}
-                 for label, channels in presets]}]
-    return {"summary": {"mode": "show_config", "config": current},
-            "ui": comps}
-
-
-def _handle_apply_config(params, cfg, data_dir):
-    raw = (params.get("config_json") or "").strip()
-    if not raw:
-        return {"summary": {"mode": "apply_config", "error": "配置 JSON 为空"},
-                "ui": [{"type": "alert",
-                        "text": "上方输入框是空的：把当前配置贴进去改好后再点应用，或直接用预设按钮。",
-                        "style": {"tone": "warning"}}]
-                + _handle_show_config(cfg)["ui"]}
-    try:
-        new_cfg = _merge_config(cfg, raw)
-    except ValueError as exc:
-        return {"summary": {"mode": "apply_config", "error": str(exc)},
-                "ui": [{"type": "alert", "text": f"配置未保存：{exc}",
-                        "style": {"tone": "danger"}}]
-                + _handle_show_config(cfg)["ui"]}
-    _write_json(Path(data_dir) / "config.json", new_cfg)
-    print("配置已更新:", json.dumps(new_cfg, ensure_ascii=False))
-    return {"summary": {"mode": "apply_config", "config": new_cfg},
-            "ui": [{"type": "alert", "text": "✅ 配置已应用，定时任务下次触发即生效（无需改动定时计划）。",
-                    "style": {"tone": "success"}}]
-            + _handle_show_config(new_cfg)["ui"]}
-
-
-def _handle_save_token(interactive, data_dir):
-    token = (interactive.get("token") or "").strip()
-    base = (interactive.get("base_url") or "").strip() or DEFAULT_BASE_URL
-    if not token:
-        raise ValueError(
-            "指令里没有 Token：请把 OpenAPI Token（tgto_ 开头）贴进输入框"
-            "后再点「🔑 保存凭据」")
-    _write_json(Path(data_dir) / "openapi.json",
-                {"base_url": base.rstrip("/"), "token": token})
-    return {"summary": {"mode": "save_token", "saved": True},
-            "ui": [{"type": "alert",
-                    "text": f"✅ 凭据已保存到插件数据目录（服务地址 {base}），"
-                            "定时计划与运行无需再填任何参数。",
-                    "style": {"tone": "success"}}]}
-
-
 # ---------- 主流程 ----------
 
 def run(params, context):
+    base_url, token = _resolve_api_config(params, context.get("data_dir", ""))
     data_dir = Path(context["data_dir"])
 
-    # 解析「指令」输入：纯文本=搜索关键词；带 mode 的 JSON=交互指令；
-    # 不带 mode 的 JSON=配置补丁；空=正常检测更新
-    raw = (params.get("cmd") or "").strip()
-    mode, interactive = "run", {}
-    if raw:
-        if raw.startswith("tgto_"):
-            mode, interactive = "save_token", {"token": raw}
-        elif raw.startswith("{"):
-            try:
-                parsed = json.loads(_normalize_json_text(raw))
-            except ValueError as exc:
-                raise ValueError(
-                    f"指令 JSON 解析失败：{exc}（常见原因：输入法把引号/逗号"
-                    "转成了中文全角符号，可重新用英文标点粘贴）")
-            if not isinstance(parsed, dict):
-                raise ValueError("指令 JSON 必须是对象")
-            if "mode" in parsed:
-                mode = str(parsed.pop("mode")).strip() or "run"
-                interactive = parsed
-            else:
-                mode, interactive = "apply_config", {"config_json": raw}
-        else:
-            mode, interactive = "search", {"search_query": raw}
+    # 配置共享：data_dir/config.json 存档，表单/定时计划里留空的参数自动用它
+    cfg = _read_json(data_dir / "config.json", {})
+    eff = dict(cfg)
+    for k, v in params.items():
+        if v is None or v == "" or v == []:
+            continue
+        eff[k] = v
 
-    if mode == "save_token":
-        return _handle_save_token(interactive, data_dir)
-
-    base_url, token = _resolve_api_config(interactive, str(data_dir))
-
-    # 配置：全部来自 data_dir/config.json（表单参数不再承载运行配置，
-    # 定时计划里填什么都不会影响运行）
-    cfg = {**CONFIG_DEFAULTS, **_read_json(data_dir / "config.json", {})}
-
+    # 交互模式
+    mode = (params.get("mode") or "run").strip()
     store = _load_sub_store(data_dir)
     if mode == "search":
-        return _handle_search(base_url, token, interactive, store)
+        return _handle_search(base_url, token, params, store)
     if mode == "add":
-        return _handle_add(base_url, token, interactive, store, data_dir)
+        return _handle_add(base_url, token, params, store, data_dir)
     if mode == "remove":
-        return _handle_remove(interactive, store, data_dir)
+        return _handle_remove(params, store, data_dir)
     if mode == "test_push":
-        return _handle_test_push(interactive, cfg, base_url, token)
-    if mode == "show_config":
-        return _handle_show_config(cfg)
-    if mode == "apply_config":
-        return _handle_apply_config(interactive, cfg, data_dir)
+        return _handle_test_push(params, eff, base_url, token)
+    if mode == "save_config":
+        defaults = {"days": 1, "kind": "", "minute_level": True, "tz_offset": 0,
+                    "push_channels": ["tg", "feishu", "webhook"],
+                    "feishu_webhook": "", "generic_webhooks": ""}
+        snap = {k: eff.get(k, d) for k, d in defaults.items()}
+        _write_json(data_dir / "config.json", snap)
+        print("已保存运行配置:", json.dumps(snap, ensure_ascii=False))
+        return {"summary": {"mode": "save_config", "saved": snap},
+                "ui": [{"type": "alert",
+                        "text": "已保存当前配置。定时计划的运行参数全部留空即可共享这份配置"
+                                "（订阅本来就在插件数据目录，自动共享）。",
+                        "style": {"tone": "success"}},
+                       {"type": "code", "text": json.dumps(
+                           snap, ensure_ascii=False, indent=2)}]}
 
-    days = int(cfg.get("days") or 1)
-    kind = (cfg.get("kind") or "").strip()
-    minute_level = bool(cfg.get("minute_level", True))
-    tz_offset = float(cfg.get("tz_offset") or 0)
+    days = int(eff.get("days") or 1)
+    kind = (eff.get("kind") or "").strip()
+    minute_level = bool(eff.get("minute_level", True))
+    tz_offset = float(eff.get("tz_offset") or 0)
 
     subs = {k: v for k, v in store.items() if v.get("tmdb_id")}
     if not subs:
@@ -892,7 +852,7 @@ def run(params, context):
         if len(updates) > 15:
             lines.append(f"…另有 {len(updates) - 15} 条")
         text = "\n".join(lines)
-        results = _dispatch(cfg, base_url, token, "追剧更新", text,
+        results = _dispatch(eff, base_url, token, "追剧更新", text,
                             updates, "episode_update")
         print("推送结果:", results)
 
@@ -935,9 +895,12 @@ def run(params, context):
             {"type": "button", "label": "🔍 搜索 TMDB 添加订阅",
              "action": "run", "params": {"mode": "search"},
              "style": {"tone": "primary"}},
-            {"type": "grid", "columns": 2, "children": [
+            {"type": "grid", "columns": 3, "children": [
+                {"type": "button", "label": "💾 保存当前配置（供定时计划共享）",
+                 "action": "run", "params": {"mode": "save_config"},
+                 "style": {"tone": "primary", "variant": "outline"}},
                 {"type": "button", "label": "📢 试推送", "action": "run",
-                 "params": {"cmd": "{\"mode\": \"test_push\"}"},
+                 "params": {"mode": "test_push"},
                  "style": {"tone": "warning", "variant": "outline"}},
             ]},
         ] + _render_subs_ui(store),
