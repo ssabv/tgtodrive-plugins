@@ -1,0 +1,140 @@
+name: Publish plugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      plugin_id:
+        description: "插件目录 ID（plugins/<ID>/）"
+        required: true
+        type: string
+      version:
+        description: "发布版本（须与插件清单一致，如 1.6.0）"
+        required: true
+        type: string
+      tag:
+        description: "Release tag（如 bt-rss-offline-v1.6.0）"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 静态检查插件
+        env:
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -e
+          DIR="plugins/${PLUGIN_ID}"
+          test -d "$DIR" || { echo "目录不存在：$DIR"; exit 1; }
+          python3 - "$DIR" "$PLUGIN_ID" "$VERSION" <<'PY'
+          import ast, json, re, sys
+          from pathlib import Path
+
+          d, plugin_id, version = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+          py_files = list(d.glob("*.py"))
+          assert py_files, "缺少 Python 文件"
+
+          manifest = None
+          pj = d / "plugin.json"
+          if pj.exists():
+              manifest = json.loads(pj.read_text(encoding="utf-8"))
+          else:
+              for f in py_files:
+                  tree = ast.parse(f.read_text(encoding="utf-8"))
+                  for node in tree.body:
+                      if isinstance(node, ast.Assign) and \
+                         getattr(node.targets[0], "id", "") == "PLUGIN_MANIFEST":
+                          manifest = ast.literal_eval(node.value)
+                          break
+              assert manifest, "缺少 plugin.json 或 PLUGIN_MANIFEST"
+          assert manifest.get("schema_version") == 1
+          assert manifest.get("id") == plugin_id, "清单 ID 与目录不一致"
+          assert manifest.get("version") == version, "清单版本与输入不一致"
+          assert re.match(r"^\d+\.\d+\.\d+$", version), "版本需符合 PEP 440 三段式"
+          print(f"静态检查通过：{plugin_id} v{version}")
+          PY
+
+      - name: 打包（单文件直发 / 目录 zip）
+        env:
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+        run: |
+          set -e
+          DIR="plugins/${PLUGIN_ID}"
+          COUNT=$(find "$DIR" -type f | wc -l)
+          if [ "$COUNT" -eq 1 ] && [ -f "$DIR/${PLUGIN_ID}.py" ]; then
+            cp "$DIR/${PLUGIN_ID}.py" "${PLUGIN_ID}.py"
+            ASSET="${PLUGIN_ID}.py"
+          else
+            (cd plugins && python3 -m zipfile -c "../${PLUGIN_ID}.zip" "${PLUGIN_ID}/")
+            ASSET="${PLUGIN_ID}.zip"
+          fi
+          echo "ASSET=${ASSET}" >> "$GITHUB_ENV"
+
+      - name: 发布 Release 并计算校验值
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+        run: |
+          set -e
+          SHA=$(sha256sum "$ASSET" | cut -d' ' -f1)
+          SIZE=$(stat -c%s "$ASSET")
+          gh release create "$TAG" "$ASSET" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "${PLUGIN_ID} ${TAG##*-v}" \
+            --notes "SHA-256: ${SHA}%0ASize: ${SIZE}"
+          echo "SHA=${SHA}" >> "$GITHUB_ENV"
+          echo "SIZE=${SIZE}" >> "$GITHUB_ENV"
+
+      - name: 更新 plugins.json
+        env:
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+          VERSION: ${{ inputs.version }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -e
+          python3 - "$PLUGIN_ID" "$VERSION" "$TAG" "$ASSET" "$SHA" "$SIZE" <<'PY'
+          import json, sys
+          from pathlib import Path
+
+          plugin_id, version, tag, asset, sha, size = sys.argv[1:7]
+          repo = "${{ github.repository }}"
+          f = Path("plugins.json")
+          data = json.loads(f.read_text(encoding="utf-8")) if f.exists() else \
+              {"schema_version": 1, "plugins": []}
+          entry = {
+              "id": plugin_id,
+              "name": "",
+              "description": "",
+              "author": "",
+              "version": version,
+              "category": "网盘工具",
+              "homepage": f"https://github.com/{repo}",
+              "download_url":
+                  f"https://github.com/{repo}/releases/download/{tag}/{asset}",
+              "sha256": sha,
+              "size": int(size),
+              "python_requires": ">=3.10",
+              "requirements": ["requests>=2.32", "bencodepy>=0.9"],
+              "status": "active",
+              "notice": "",
+          }
+          plugins = [p for p in data["plugins"] if p["id"] != plugin_id]
+          plugins.append(entry)
+          data["plugins"] = plugins
+          f.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                       encoding="utf-8")
+          print(f"plugins.json 已更新：{plugin_id} v{version}")
+          PY
+          git config user.name "ssabv"
+          git config user.email "ssabv@users.noreply.github.com"
+          git add plugins.json
+          git commit -m "publish: ${PLUGIN_ID} v${{ inputs.version }}"
+          git push

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "bt-rss-offline",
+      "name": "BT RSS 离线订阅",
+      "description": "订阅 BT 站 RSS（RSS 2.0 / Atom），自动解析磁力或下载种子计算 infohash（结果缓存，仅算一次），按关键词与体积过滤后同时提交到多个网盘离线下载（123 / 115 / 光鸭，经主程序离线接口，source 默认 seedhub）。复用主程序全局代理拉取 RSS 与种子，支持提交后经主程序绑定的 Telegram 机器人推送结果汇总，按「资源+目标」持久去重，内置去重历史与种子缓存清理。需在 OpenAPI 页面创建凭据并填入插件表单（服务地址 + Token）。",
+      "author": "ssabv",
+      "version": "1.5.0",
+      "category": "网盘工具",
+      "homepage": "https://github.com/ssabv/tgtodrive-plugins",
+      "download_url": "https://github.com/ssabv/tgtodrive-plugins/releases/download/bt-rss-offline-v1.5.0/bt-rss-offline.py",
+      "sha256": "9725a7d2f902057353a21403f358cb66a3fd64374b8c2e284ad8c71fa4291460",
+      "size": 38655,
+      "python_requires": ">=3.10",
+      "requirements": [
+        "requests>=2.32",
+        "bencodepy>=0.9"
+      ],
+      "status": "active",
+      "notice": "需要容器内已安装 requests 与 bencodepy（官方镜像自带）；使用前在 OpenAPI 页面创建凭据并在插件表单填写。"
+    }
+  ]
+}
