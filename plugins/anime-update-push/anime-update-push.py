@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.9.3",
+    "version": "1.9.4",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -651,20 +651,33 @@ def _find_still(obj):
 
 
 def _tmdb_api(tmdb_key, path, proxies):
-    """直连 TMDB 官方 API（urllib，规避沙箱对 requests 的包装）。"""
-    import urllib.request as _ur  # noqa: PLC0415
-    qs = f"api_key={tmdb_key}&language=zh-CN"
-    url = "https://api.themoviedb.org/3" + path + "?" + qs
-    req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0",
-                                    "Accept": "application/json"})
-    handlers = []
-    if proxies:
-        px = proxies.get("https") or proxies.get("http")
-        if px:
-            handlers.append(_ur.ProxyHandler({"http": px, "https": px}))
-    opener = _ur.build_opener(*handlers)
-    with opener.open(req, timeout=20) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    """直连 TMDB 官方 API，多种请求方式级联探测。"""
+    url = "https://api.themoviedb.org/3" + path \
+        + f"?api_key={tmdb_key}&language=zh-CN"
+    last = None
+    try:
+        r = requests.get(url, timeout=(10, 20), proxies=proxies)
+        print("TMDB try1(requests+proxy):", r.status_code)
+        return r.json()
+    except Exception as exc:  # noqa: BLE001
+        last = exc
+        print("TMDB try1 失败:", exc)
+    try:
+        r = requests.get(url, timeout=(10, 20))
+        print("TMDB try2(requests直连):", r.status_code)
+        return r.json()
+    except Exception as exc:  # noqa: BLE001
+        last = exc
+        print("TMDB try2 失败:", exc)
+    try:
+        import urllib.request as _ur  # noqa: PLC0415
+        with _ur.urlopen(url, timeout=20) as resp:  # noqa: S310
+            print("TMDB try3(urllib直连): ok")
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        last = exc
+        print("TMDB try3 失败:", exc)
+    raise last or RuntimeError("TMDB 不可达")
 
 
 def _tmdb_cfg(eff, base_url, token):
