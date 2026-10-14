@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.5.0",
+    "version": "1.5.1",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -541,7 +541,7 @@ def _handle_remove(params, store, data_dir):
                     "style": {"tone": "muted"}}] + _render_subs_ui(store)}
 
 
-def _handle_test_push(params, eff, base_url, token):
+def _handle_test_push(params, cfg, base_url, token):
     text = "📢 追剧推送测试\n\n这是一条测试消息，收到即渠道配置正确。\n" \
            + time.strftime("%Y-%m-%d %H:%M:%S")
     results = _dispatch(cfg, base_url, token, "追剧推送测试", text, [],
