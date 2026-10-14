@@ -22,16 +22,16 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.3.1",
+    "version": "1.4.0",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
     "ui": {
         "width": "normal",
         "layout": "stack",
-        "components": [
+            "components": [
             {"type": "alert",
-             "text": "选番：输入关键词点「搜索 TMDB」→ 结果页点海报下「➕ 订阅」。点「试推送」验证渠道。最后去「定时执行」建计划（cron 建议 */5 * * * *）。",
+             "text": "选番：输入关键词点「搜索 TMDB」→ 结果页点海报下「➕ 订阅」。点「试推送」验证渠道。定时计划：填好配置点「💾 保存配置」，计划参数全部留空即可共享这份配置。",
              "style": {"tone": "muted"}},
             {"type": "field", "name": "search_query"},
             {"type": "grid", "columns": 3, "children": [
@@ -44,6 +44,14 @@ PLUGIN_MANIFEST = {
                 {"type": "button", "label": "📢 试推送", "action": "run",
                  "params": {"mode": "test_push"},
                  "style": {"tone": "warning"}},
+            ]},
+            {"type": "grid", "columns": 3, "children": [
+                {"type": "button", "label": "💾 保存当前配置（供定时计划共享）",
+                 "action": "run", "params": {"mode": "save_config"},
+                 "style": {"tone": "primary", "variant": "outline"}},
+                {"type": "button", "label": "⏳ 查看待推送", "action": "run",
+                 "params": {"mode": "run"},
+                 "style": {"tone": "muted", "variant": "outline"}},
             ]},
         ],
     },
@@ -73,6 +81,7 @@ PLUGIN_MANIFEST = {
                 {"label": "添加订阅", "value": "add"},
                 {"label": "取消订阅", "value": "remove"},
                 {"label": "试推送", "value": "test_push"},
+                {"label": "保存当前配置", "value": "save_config"},
             ],
             "help": "一般不用手动改：用表单/结果页按钮操作即可。",
         },
@@ -578,10 +587,10 @@ def _handle_remove(params, store, data_dir):
                     "style": {"tone": "muted"}}] + _render_subs_ui(store)}
 
 
-def _handle_test_push(params, base_url, token):
+def _handle_test_push(params, eff, base_url, token):
     text = "📢 追剧推送测试\n\n这是一条测试消息，收到即渠道配置正确。\n" \
            + time.strftime("%Y-%m-%d %H:%M:%S")
-    results = _dispatch(params, base_url, token, "追剧推送测试", text, [],
+    results = _dispatch(eff, base_url, token, "追剧推送测试", text, [],
                         "test")
     rows = [[ch, f"{n} 条成功" if n else "未发送/失败",
              "✅" if n else "⚠️"] for ch, n in results.items()] or \
@@ -719,6 +728,14 @@ def run(params, context):
     base_url, token = _resolve_api_config(params, context.get("data_dir", ""))
     data_dir = Path(context["data_dir"])
 
+    # 配置共享：data_dir/config.json 存档，表单/定时计划里留空的参数自动用它
+    cfg = _read_json(data_dir / "config.json", {})
+    eff = dict(cfg)
+    for k, v in params.items():
+        if v is None or v == "" or v == []:
+            continue
+        eff[k] = v
+
     # 交互模式
     mode = (params.get("mode") or "run").strip()
     store = _load_sub_store(data_dir)
@@ -729,12 +746,26 @@ def run(params, context):
     if mode == "remove":
         return _handle_remove(params, store, data_dir)
     if mode == "test_push":
-        return _handle_test_push(params, base_url, token)
+        return _handle_test_push(params, eff, base_url, token)
+    if mode == "save_config":
+        defaults = {"days": 1, "kind": "", "minute_level": True, "tz_offset": 0,
+                    "push_channels": ["tg", "feishu", "webhook"],
+                    "feishu_webhook": "", "generic_webhooks": ""}
+        snap = {k: eff.get(k, d) for k, d in defaults.items()}
+        _write_json(data_dir / "config.json", snap)
+        print("已保存运行配置:", json.dumps(snap, ensure_ascii=False))
+        return {"summary": {"mode": "save_config", "saved": snap},
+                "ui": [{"type": "alert",
+                        "text": "已保存当前配置。定时计划的运行参数全部留空即可共享这份配置"
+                                "（订阅本来就在插件数据目录，自动共享）。",
+                        "style": {"tone": "success"}},
+                       {"type": "code", "text": json.dumps(
+                           snap, ensure_ascii=False, indent=2)}]}
 
-    days = int(params.get("days") or 1)
-    kind = (params.get("kind") or "").strip()
-    minute_level = bool(params.get("minute_level", True))
-    tz_offset = float(params.get("tz_offset") or 0)
+    days = int(eff.get("days") or 1)
+    kind = (eff.get("kind") or "").strip()
+    minute_level = bool(eff.get("minute_level", True))
+    tz_offset = float(eff.get("tz_offset") or 0)
 
     subs = {k: v for k, v in store.items() if v.get("tmdb_id")}
     if not subs:
@@ -821,7 +852,7 @@ def run(params, context):
         if len(updates) > 15:
             lines.append(f"…另有 {len(updates) - 15} 条")
         text = "\n".join(lines)
-        results = _dispatch(params, base_url, token, "追剧更新", text,
+        results = _dispatch(eff, base_url, token, "追剧更新", text,
                             updates, "episode_update")
         print("推送结果:", results)
 
@@ -864,8 +895,13 @@ def run(params, context):
             {"type": "button", "label": "🔍 搜索 TMDB 添加订阅",
              "action": "run", "params": {"mode": "search"},
              "style": {"tone": "primary"}},
-            {"type": "button", "label": "📢 试推送", "action": "run",
-             "params": {"mode": "test_push"},
-             "style": {"tone": "warning"}},
+            {"type": "grid", "columns": 3, "children": [
+                {"type": "button", "label": "💾 保存当前配置（供定时计划共享）",
+                 "action": "run", "params": {"mode": "save_config"},
+                 "style": {"tone": "primary", "variant": "outline"}},
+                {"type": "button", "label": "📢 试推送", "action": "run",
+                 "params": {"mode": "test_push"},
+                 "style": {"tone": "warning", "variant": "outline"}},
+            ]},
         ] + _render_subs_ui(store),
     }
