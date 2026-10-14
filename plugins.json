@@ -25,12 +25,12 @@
       "name": "追剧更新推送",
       "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
       "author": "ssabv",
-      "version": "1.8.1",
+      "version": "1.8.2",
       "category": "媒体工具",
       "homepage": "https://github.com/ssabv/tgtodrive-plugins",
-      "download_url": "https://github.com/ssabv/tgtodrive-plugins/releases/download/anime-update-push-v1.8.1/anime-update-push.py",
-      "sha256": "12204537e50756d57c1de3b55ef00b6133ababf2a01dacfc29bd55308b8a81b4",
-      "size": 46256,
+      "download_url": "https://github.com/ssabv/tgtodrive-plugins/releases/download/anime-update-push-v1.8.2/anime-update-push.py",
+      "sha256": "55067e49547721a12f389074cb8ec1367439065c6be6da927cb775853511732e",
+      "size": 48709,
       "python_requires": ">=3.10",
       "requirements": [
         "requests>=2.32"
