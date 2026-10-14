@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.10.1",
+    "version": "1.10.2",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -57,15 +57,16 @@ PLUGIN_MANIFEST = {
             "name": "api_base_url",
             "label": "服务地址",
             "type": "text",
-            "default": "http://127.0.0.1:12366",
-            "help": "容器内可达的本服务地址；与运行接口同容器时用默认值即可。留空则读环境变量。",
+            "default": "",
+            "help": "留空自动用已保存配置，否则 http://127.0.0.1:12366。",
         },
         {
             "name": "openapi_token",
-            "label": "OpenAPI Token",
+            "label": "OpenAPI Token（必填）",
             "type": "password",
             "default": "",
-            "help": "在「实用工具 → OpenAPI」创建。可填在这里，也可配置环境变量，或在插件数据目录放 openapi.json。",
+            "required": True,
+            "help": "必填：在「实用工具 → OpenAPI」创建。填过一次后自动持久化，定时任务无需再填。",
         },
         {
             "name": "tmdb_api_key",
@@ -117,10 +118,10 @@ PLUGIN_MANIFEST = {
             "name": "days",
             "label": "检查最近几天",
             "type": "number",
-            "default": 1,
+            "default": "",
             "min": 1,
             "max": 7,
-            "help": "检查最近 N 天的日历更新（含今天），防止错过。已推送过的不会重复推。",
+            "help": "留空用已保存配置（默认 2）。已推送过的不会重复推。",
         },
         {
             "name": "kind",
@@ -229,6 +230,8 @@ def _resolve_api_config(params, data_dir):
             token = token or str(cfg.get("token") or "").strip()
         except (OSError, ValueError):
             pass
+    if not base_url:
+        base_url = "http://127.0.0.1:12366"
     if not base_url or not token:
         raise ValueError(
             "缺少服务地址或 OpenAPI Token：请在表单填写，或配置环境变量，"
