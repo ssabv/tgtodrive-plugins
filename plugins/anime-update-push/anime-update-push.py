@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.10.6",
+    "version": "1.11.0",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -838,7 +838,7 @@ def _entry_text(u, det):
     when = u.get("time") or u.get("date") or ""
     lines.append(f"🎬 更新: {u.get('label', '')}"
                  + (f"（{when}）" if when else ""))
-    ov = (det.get("overview") or "").strip()
+    ov = ((det or {}).get("overview") or (u.get("overview") or "")).strip()
     if ov:
         lines.append("📖 " + ov[:200] + ("…" if len(ov) > 200 else ""))
     return "\n".join(lines)
@@ -1037,6 +1037,17 @@ def _collect_calendar_entries(obj, entries, ctx=None, depth=0):
             _collect_calendar_entries(item, entries, ctx, depth + 1)
 
 
+# ---------- 日历持久缓存 ----------
+
+def _cc_date_ok(v, today):
+    """缓存条目保留 10 天；date 解析不了的保守保留。"""
+    try:
+        d = datetime.datetime.strptime(v.get("date", ""), "%Y-%m-%d").date()
+    except ValueError:
+        return True
+    return abs((today - d).days) <= 10
+
+
 # ---------- 主流程 ----------
 
 def run(params, context):
@@ -1125,12 +1136,39 @@ def run(params, context):
     print(f"日历解析出 {len(entries)} 条剧集条目（最近 {days} 天），"
           f"其中带时刻 {sum(1 for e in entries if e.get('time'))} 条")
 
+    # 2.5 日历持久缓存：防止「23:50 更新、定时刚好跨午夜」把昨天的条目丢掉。
+    # 每次运行把条目存档（含简介/剧照，见下方推送回填），判定时用 缓存∪本次，
+    # 已推送的靠 pushed.json 去重，缓存条目保留 10 天后清理。
+    def _ck(e):
+        return (f"{e.get('tmdb_id') or e.get('title')}|{e.get('season')}"
+                f"|{e.get('episode')}|{e.get('date', '')}")
+    cc_path = data_dir / "calendar_cache.json"
+    ccache = _read_json(cc_path, {})
+    if not isinstance(ccache, dict):
+        ccache = {}
+    for e in entries:
+        prev = ccache.get(_ck(e)) or {}
+        prev.update(e)
+        ccache[_ck(e)] = prev
+    fresh = {_ck(e) for e in entries}
+    merged = list(entries)
+    for k, v in ccache.items():
+        if k not in fresh:
+            merged.append(v)
+    _today = datetime.date.today()
+    for k in [k for k, v in ccache.items()
+              if not _cc_date_ok(v, _today)]:
+        ccache.pop(k, None)
+    _write_json(cc_path, ccache)
+    if len(merged) > len(entries):
+        print(f"日历缓存补回 {len(merged) - len(entries)} 条（防跨午夜错过）")
+
     # 3. 匹配订阅 + 分钟级到点判断 + 去重
     now = datetime.datetime.now()
     _season_cache = {}
     _tmdb_key, _tmdb_proxies = _tmdb_cfg(eff, base_url, token)
     updates, pending, matched = [], [], set()
-    for e in entries:
+    for e in merged:
         hit = None
         for name, sub in subs.items():
             if e.get("tmdb_id") == sub.get("tmdb_id"):
@@ -1185,14 +1223,25 @@ def run(params, context):
         _still_cache = {}
         for u in updates:
             det = _fetch_details(base_url, token, u.get("tmdb_id"),
-                                 _det_cache)
+                                 _det_cache) or {}
+            ck = _ck(u)
+            cc = ccache.get(ck)
+            if cc and not (det.get("overview") or "").strip()                     and cc.get("overview"):
+                det["overview"] = cc["overview"]
             text = _entry_text(u, det)
-            u["still"] = _fetch_still(base_url, token, u.get("tmdb_id"),
-                                      u.get("season"), u.get("episode"),
-                                      _still_cache, _tmdb_key, _tmdb_proxies)
+            u["still"] = u.get("still") or _fetch_still(
+                base_url, token, u.get("tmdb_id"),
+                u.get("season"), u.get("episode"),
+                _still_cache, _tmdb_key, _tmdb_proxies)
+            if cc:
+                if u.get("still"):
+                    cc["still"] = u["still"]
+                if (det.get("overview") or "").strip():
+                    cc["overview"] = det["overview"]
             r = _dispatch(eff, base_url, token, "追剧更新", text, [u],
                           "episode_update", u.get("still"))
             print(f"推送 {u['title']} {u['label']}: {r}")
+        _write_json(cc_path, ccache)
 
     if len(pushed) > 3000:
         pushed = dict(sorted(pushed.items(),
