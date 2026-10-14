@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.11.3",
+    "version": "1.11.4",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -31,10 +31,13 @@ PLUGIN_MANIFEST = {
         "layout": "stack",
             "components": [
             {"type": "alert",
-             "text": "选番：上方「操作模式」选「搜索 TMDB 选番」+ 输入关键词运行 → 结果页点海报下「➕ 订阅」。点「试推送」验证渠道。定时计划：配置填过一次自动保存，计划参数全部留空即可共享这份配置。",
+             "text": "选番：输入关键词点「搜索 TMDB」→ 结果页点海报下「➕ 订阅」。点「试推送」验证渠道。定时计划：配置填过一次自动保存，计划参数全部留空即可共享这份配置。",
              "style": {"tone": "muted"}},
             {"type": "field", "name": "search_query"},
-            {"type": "grid", "columns": 1, "children": [
+            {"type": "grid", "columns": 2, "children": [
+                {"type": "button", "label": "🔍 搜索 TMDB", "action": "run",
+                 "params": {"mode": "search"},
+                 "style": {"tone": "primary"}},
                 {"type": "button", "label": "📢 试推送", "action": "run",
                  "params": {"mode": "test_push"},
                  "style": {"tone": "warning"}},
@@ -577,9 +580,6 @@ def _handle_search(base_url, token, params, store):
              "style": {"tone": "primary"}},
         ]
         comps.append({"type": "card", "label": c["title"], "children": card})
-    comps.append({"type": "button", "label": "🔍 用表单关键词再搜一次",
-                  "action": "run", "params": {"mode": "search"},
-                  "style": {"tone": "primary"}})
     return {"summary": {"mode": "search", "query": q, "results": len(results)},
             "ui": comps + _render_subs_ui(store)}
 
