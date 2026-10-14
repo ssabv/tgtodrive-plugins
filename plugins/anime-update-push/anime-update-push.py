@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.9.0",
+    "version": "1.9.1",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -710,19 +710,20 @@ def _resolve_season(base_url, token, tmdb_id, episode, cache,
                 if isinstance(sn, int) and sn >= 1:
                     seasons.append((sn, ec if isinstance(ec, int) else 0))
             season = pick(seasons)
-        elif tmdb_key:
-            n = _tmdb_api(tmdb_key, f"/tv/{tmdb_id}", proxies) or {}
-            for s in n.get("seasons") or []:
-                sn = s.get("season_number")
-                ec = s.get("episode_count")
-                if isinstance(sn, int) and sn >= 1:
-                    seasons.append((sn, ec if isinstance(ec, int) else 0))
-            season = pick(seasons)
-        else:
-            nos = data.get("number_of_seasons") if isinstance(data, dict) \
-                else None
-            if isinstance(nos, int) and nos >= 1:
-                season = nos
+        nos = data.get("number_of_seasons") if isinstance(data, dict) else None
+        if season is None and tmdb_key:
+            try:
+                n = _tmdb_api(tmdb_key, f"/tv/{tmdb_id}", proxies) or {}
+                for s in n.get("seasons") or []:
+                    sn = s.get("season_number")
+                    ec = s.get("episode_count")
+                    if isinstance(sn, int) and sn >= 1:
+                        seasons.append((sn, ec if isinstance(ec, int) else 0))
+                season = pick(seasons)
+            except Exception as exc:  # noqa: BLE001
+                print(f"季号解析：TMDB API 失败（{exc}），退回主程序详情")
+        if season is None and isinstance(nos, int) and nos >= 1:
+            season = nos
     except Exception:  # noqa: BLE001
         pass
     cache[key] = season
@@ -764,8 +765,10 @@ def _fetch_still(base_url, token, tmdb_id, season, episode, cache,
                 url = still_from(
                     _tmdb_api(tmdb_key,
                               f"/tv/{tmdb_id}/season/{season}", proxies))
-            except Exception:  # noqa: BLE001
-                pass
+                if url:
+                    print(f"剧照：来自 TMDB（S{season:02d}E{episode:02d}）")
+            except Exception as exc:  # noqa: BLE001
+                print(f"剧照：TMDB API 失败（{exc}）")
     if url is None:
         try:
             resp = _api_call(base_url, token, "GET",
