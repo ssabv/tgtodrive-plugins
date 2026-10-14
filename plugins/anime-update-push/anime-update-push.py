@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.12.2",
+    "version": "1.12.3",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -879,7 +879,7 @@ def _strip_tags(t):
 
 
 def _entry_text(u, det, rich=None):
-    """单部番的推送文案（卡片式 + 底部订阅提醒）。"""
+    """单部番的推送文案（完整卡片 + 底部分隔线与订阅提醒）。"""
     rich = rich or {}
     det = det or {}
     genres = [g for g in (det.get("genres") or []) if isinstance(g, str)]
@@ -891,19 +891,30 @@ def _entry_text(u, det, rich=None):
     meta = []
     score = det.get("score")
     if isinstance(score, (int, float)) and score > 0:
-        meta.append(f"评分: {score}")
+        meta.append(f"⭐️ 评分: {score}")
+    if rich.get("region"):
+        meta.append("地区: " + rich["region"])
     if genres:
         meta.append("类型: " + "/".join(genres[:4]))
     if meta:
-        lines.append("⭐️ " + " / ".join(meta))
+        lines.append(" / ".join(meta))
     lines.append("🎬 导演: " + (rich.get("director") or "未知"))
+    if rich.get("cast"):
+        lines.append("👥 主演: " + rich["cast"])
+    if rich.get("seasons"):
+        eps = rich.get("episodes")
+        lines.append(f"📺 共{rich['seasons']}季"
+                     + (f" ({eps}集)" if eps else ""))
     when = u.get("time") or u.get("date") or ""
     lines.append(f"🎬 更新: {u.get('label', '')}"
                  + (f"（{when}）" if when else ""))
     ov = ((det or {}).get("overview") or (u.get("overview") or "")).strip()
     if ov:
         lines.append("📖 简介:")
-        lines.append(ov[:600] + ("…" if len(ov) > 600 else ""))
+        lines.append("<blockquote expandable>"
+                     + _html_escape(ov[:600])
+                     + ("…" if len(ov) > 600 else "")
+                     + "</blockquote>")
     lines.append("―――――――――――")
     lines.append("🔔 订阅更新提醒")
     lines.append("🎉 你订阅的剧集更新啦！")
