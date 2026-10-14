@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.9.2",
+    "version": "1.9.3",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -651,11 +651,20 @@ def _find_still(obj):
 
 
 def _tmdb_api(tmdb_key, path, proxies):
-    """直连 TMDB 官方 API（手工拼查询串，规避沙箱 params 兼容问题）。"""
+    """直连 TMDB 官方 API（urllib，规避沙箱对 requests 的包装）。"""
+    import urllib.request as _ur  # noqa: PLC0415
     qs = f"api_key={tmdb_key}&language=zh-CN"
-    resp = requests.get("https://api.themoviedb.org/3" + path + "?" + qs,
-                        timeout=(10, 20), proxies=proxies)
-    return resp.json()
+    url = "https://api.themoviedb.org/3" + path + "?" + qs
+    req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0",
+                                    "Accept": "application/json"})
+    handlers = []
+    if proxies:
+        px = proxies.get("https") or proxies.get("http")
+        if px:
+            handlers.append(_ur.ProxyHandler({"http": px, "https": px}))
+    opener = _ur.build_opener(*handlers)
+    with opener.open(req, timeout=20) as resp:
+        return json.loads(resp.read().decode("utf-8"))
 
 
 def _tmdb_cfg(eff, base_url, token):
