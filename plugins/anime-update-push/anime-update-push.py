@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.10.5",
+    "version": "1.10.6",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -108,11 +108,10 @@ PLUGIN_MANIFEST = {
         {
             "name": "days",
             "label": "检查最近几天",
-            "type": "number",
+            "type": "text",
             "default": "",
-            "min": 1,
-            "max": 7,
-            "help": "留空用已保存配置（默认 2），定时任务留空即可。已推送过的不会重复推。",
+            "placeholder": "留空=已保存配置（默认 2）",
+            "help": "填 1-7 的数字；留空用已保存配置（默认 2），定时任务留空即可。已推送过的不会重复推。",
         },
         {
             "name": "kind",
