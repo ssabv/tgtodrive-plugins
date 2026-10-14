@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.8.1",
+    "version": "1.8.2",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -69,6 +69,13 @@ PLUGIN_MANIFEST = {
             "type": "password",
             "default": "",
             "help": "在「实用工具 → OpenAPI」创建。可填在这里，也可配置环境变量，或在插件数据目录放 openapi.json。",
+        },
+        {
+            "name": "tmdb_api_key",
+            "label": "TMDB API Key（可选）",
+            "type": "password",
+            "default": "",
+            "help": "选填。填写后可直连 TMDB 取每集剧照（主程序未开「完整季集模式」时的兜底）；不填则尽力而为。",
         },
         {
             "name": "mode",
@@ -643,64 +650,121 @@ def _find_still(obj):
     return None
 
 
-def _resolve_season(base_url, token, tmdb_id, episode, cache):
-    """季号缺失/为 0 时，从剧集详情推断真实季号：
-    在正季（season_number>=1）里选集数 >= episode 的最大季号，
-    没有则取最大正季号。结果缓存到本次运行。"""
+def _tmdb_api(tmdb_key, path, proxies):
+    """直连 TMDB 官方 API。"""
+    resp = requests.get(
+        "https://api.themoviedb.org/3" + path,
+        params={"api_key": tmdb_key, "language": "zh-CN"},
+        timeout=(10, 20), proxies=proxies)
+    return resp.json()
+
+
+def _tmdb_cfg(eff, base_url, token):
+    """从配置取 TMDB Key 与代理 proxies 字典。"""
+    key = str((eff or {}).get("tmdb_api_key") or "").strip() or None
+    proxies = None
+    try:
+        px = _resolve_proxy(base_url, token)
+        if px:
+            proxies = {"http": px, "https": px}
+    except Exception:  # noqa: BLE001
+        pass
+    return key, proxies
+
+
+def _resolve_season(base_url, token, tmdb_id, episode, cache,
+                    tmdb_key=None, proxies=None):
+    """季号缺失/为 0 时推断真实季号，优先级：
+    1) 主程序详情 seasons[]；2) TMDB 官方 API seasons[]；
+    3) 主程序详情 number_of_seasons。结果缓存到本次运行。"""
     key = f"season:{tmdb_id}:{episode}"
     if key in cache:
         return cache[key]
     season = None
+
+    def pick(seasons):
+        if not seasons:
+            return None
+        fit = [sn for sn, ec in seasons if ec >= episode > 0]
+        return max(fit) if fit else max(sn for sn, _ in seasons)
+
+    seasons = []
     try:
         resp = _api_call(base_url, token, "GET",
                          f"/api/media/details/tmdb/tv/{tmdb_id}")
-        seasons = []
-        for node in _walk_lists(resp.json()):
-            if isinstance(node.get("seasons"), list):
-                for s in node["seasons"]:
-                    if not isinstance(s, dict):
-                        continue
-                    sn = s.get("season_number")
-                    ec = s.get("episode_count")
-                    if isinstance(sn, int) and sn >= 1:
-                        seasons.append(
-                            (sn, ec if isinstance(ec, int) else 0))
+        data = resp.json()
+        if isinstance(data, dict) and isinstance(data.get("data"), dict):
+            data = data["data"]
+        node = None
+        for n in _walk_lists(data):
+            if isinstance(n.get("seasons"), list):
+                node = n
                 break
-        if seasons:
-            fit = [sn for sn, ec in seasons if ec >= episode > 0]
-            season = max(fit) if fit else max(sn for sn, _ in seasons)
+        if node:
+            for s in node["seasons"]:
+                if not isinstance(s, dict):
+                    continue
+                sn = s.get("season_number")
+                ec = s.get("episode_count")
+                if isinstance(sn, int) and sn >= 1:
+                    seasons.append((sn, ec if isinstance(ec, int) else 0))
+            season = pick(seasons)
+        elif tmdb_key:
+            n = _tmdb_api(tmdb_key, f"/tv/{tmdb_id}", proxies) or {}
+            for s in n.get("seasons") or []:
+                sn = s.get("season_number")
+                ec = s.get("episode_count")
+                if isinstance(sn, int) and sn >= 1:
+                    seasons.append((sn, ec if isinstance(ec, int) else 0))
+            season = pick(seasons)
+        else:
+            nos = data.get("number_of_seasons") if isinstance(data, dict) \
+                else None
+            if isinstance(nos, int) and nos >= 1:
+                season = nos
     except Exception:  # noqa: BLE001
         pass
     cache[key] = season
     return season
 
 
-def _fetch_still(base_url, token, tmdb_id, season, episode, cache):
-    """取该集剧照；季号缺失/为 0 时先推断季号，仍失败再退海报。"""
+def _fetch_still(base_url, token, tmdb_id, season, episode, cache,
+                 tmdb_key=None, proxies=None):
+    """取该集剧照：主程序季集接口 → TMDB 官方 API → 退海报。"""
     key = f"{tmdb_id}:{season}:{episode}"
     if key in cache:
         return cache[key]
     if not (isinstance(season, int) and season > 0):
         season = _resolve_season(base_url, token, tmdb_id,
                                  episode if isinstance(episode, int) else 0,
-                                 cache)
+                                 cache, tmdb_key, proxies)
     url = None
-    try:
-        if isinstance(season, int) and season > 0 \
-                and isinstance(episode, int):
+
+    def still_from(payload):
+        for ep in _walk_lists(payload):
+            if isinstance(ep, dict) \
+                    and ep.get("episode_number") == episode:
+                st = ep.get("still_path")
+                if isinstance(st, str) and st.strip():
+                    return ("https://image.tmdb.org/t/p/w500" + st.strip()
+                            if st.startswith("/") else st.strip())
+        return None
+
+    if isinstance(season, int) and season > 0 and isinstance(episode, int):
+        try:
             resp = _api_call(
                 base_url, token, "GET",
                 f"/api/media/details/tmdb/tv/{tmdb_id}/season/{season}")
-            for ep in _walk_lists(resp.json()):
-                if isinstance(ep, dict) and ep.get("episode_number") == episode:
-                    st = ep.get("still_path")
-                    if isinstance(st, str) and st.strip():
-                        url = ("https://image.tmdb.org/t/p/w500" + st.strip()
-                               if st.startswith("/")
-                               else st.strip())
-                    break
-    except Exception:  # noqa: BLE001
-        pass
+            url = still_from(resp.json())
+        except Exception:  # noqa: BLE001
+            pass
+        if url is None and tmdb_key:
+            try:
+                url = still_from(
+                    _tmdb_api(tmdb_key,
+                              f"/tv/{tmdb_id}/season/{season}", proxies))
+            except Exception:  # noqa: BLE001
+                pass
     if url is None:
         try:
             resp = _api_call(base_url, token, "GET",
@@ -728,6 +792,7 @@ def _handle_test_push(params, eff, base_url, token, data_dir=None):
     days = int(eff.get("days") or 7)
     subs = _load_sub_store(data_dir) if data_dir else {}
     sub_ids = {v.get("tmdb_id") for v in subs.values() if v.get("tmdb_id")}
+    tmdb_key, tmdb_proxies = _tmdb_cfg(eff, base_url, token)
     sample_updates, poster = [], None
     if sub_ids:
         try:
@@ -746,7 +811,8 @@ def _handle_test_push(params, eff, base_url, token, data_dir=None):
                 if not (isinstance(season, int) and season > 0):
                     season = _resolve_season(base_url, token,
                                              e.get("tmdb_id"),
-                                             e["episode"], cache)
+                                             e["episode"], cache,
+                                             tmdb_key, tmdb_proxies)
                 ep = ((f"S{season:02d}" if season else "S??")
                       + f"E{e['episode']:02d}")
                 sample_updates.append({"key": e.get("tmdb_id"), "title": e["title"],
@@ -761,7 +827,7 @@ def _handle_test_push(params, eff, base_url, token, data_dir=None):
                 s0 = sample_updates[0]
                 poster = _fetch_still(base_url, token, s0["tmdb_id"],
                                       s0.get("season"), s0.get("episode"),
-                                      cache)
+                                      cache, tmdb_key, tmdb_proxies)
         except Exception as exc:  # noqa: BLE001
             print(f"试推送：读取日历失败，退回纯文本测试：{exc}")
     if sample_updates:
@@ -990,6 +1056,7 @@ def run(params, context):
     # 3. 匹配订阅 + 分钟级到点判断 + 去重
     now = datetime.datetime.now()
     _season_cache = {}
+    _tmdb_key, _tmdb_proxies = _tmdb_cfg(eff, base_url, token)
     updates, pending, matched = [], [], set()
     for e in entries:
         hit = None
@@ -1003,7 +1070,8 @@ def run(params, context):
         season = e.get("season")
         if not (isinstance(season, int) and season > 0):
             season = _resolve_season(base_url, token, e.get("tmdb_id"),
-                                     e["episode"], _season_cache)
+                                     e["episode"], _season_cache,
+                                     _tmdb_key, _tmdb_proxies)
         ep_label = (f"S{season:02d}" if season else "S??") + f"E{e['episode']:02d}"
         key = f"{e.get('tmdb_id') or hit}|{ep_label}|{e.get('date', '')}"
         if key in pushed:
@@ -1053,7 +1121,7 @@ def run(params, context):
         for u in updates[:3]:  # 最多取前 3 条的剧照，TG 用第一条
             u["still"] = _fetch_still(base_url, token, u.get("tmdb_id"),
                                       u.get("season"), u.get("episode"),
-                                      poster_cache)
+                                      poster_cache, _tmdb_key, _tmdb_proxies)
         poster = next((u["still"] for u in updates[:3] if u.get("still")),
                       None)
         results = _dispatch(eff, base_url, token, "追剧更新", text,
