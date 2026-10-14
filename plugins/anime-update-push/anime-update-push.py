@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.7.0",
+    "version": "1.8.0",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -339,27 +339,51 @@ def _resolve_bot(base_url, token):
     return []
 
 
-def _send_tg(pairs, text, proxies):
+def _send_tg(pairs, text, proxies, poster=None):
     ok = 0
     for bot_token, chat_id in pairs:
-        try:
-            resp = requests.post(
-                f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                json={"chat_id": chat_id, "text": text,
-                      "disable_web_page_preview": True},
-                timeout=(10, 30), proxies=proxies,
-            )
-            if resp.status_code == 200:
-                ok += 1
-                print(f"TG：已发送到 chat {chat_id}")
-            else:
-                print(f"TG：发送失败 HTTP {resp.status_code} {resp.text[:150]}")
-        except Exception as exc:  # noqa: BLE001
-            print(f"TG：发送失败：{exc}")
+        sent = False
+        if poster:
+            # 先试带海报的 sendPhoto（caption 上限 1024 字符）
+            try:
+                resp = requests.post(
+                    f"https://api.telegram.org/bot{bot_token}/sendPhoto",
+                    json={"chat_id": chat_id, "photo": poster,
+                          "caption": text[:1000],
+                          "disable_web_page_preview": True},
+                    timeout=(10, 30), proxies=proxies,
+                )
+                if resp.status_code == 200:
+                    sent = True
+                else:
+                    print(f"TG：带海报发送失败 HTTP {resp.status_code}，"
+                          "回退纯文本")
+            except Exception as exc:  # noqa: BLE001
+                print(f"TG：带海报发送失败：{exc}，回退纯文本")
+        if not sent:
+            try:
+                resp = requests.post(
+                    f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                    json={"chat_id": chat_id, "text": text,
+                          "disable_web_page_preview": not poster},
+                    timeout=(10, 30), proxies=proxies,
+                )
+                sent = resp.status_code == 200
+                if not sent:
+                    print(f"TG：发送失败 HTTP {resp.status_code} "
+                          f"{resp.text[:150]}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"TG：发送失败：{exc}")
+        if sent:
+            ok += 1
+            print(f"TG：已发送到 chat {chat_id}"
+                  + ("（带海报）" if poster else ""))
     return ok
 
 
-def _send_feishu(urls, text):
+def _send_feishu(urls, text, poster=None):
+    if poster:
+        text = text + f"\n\n海报：{poster}"
     ok = 0
     for url in urls:
         try:
@@ -399,26 +423,29 @@ def _send_webhooks(urls, text, payload):
     return ok
 
 
-def _dispatch(params, base_url, token, title, text, updates, event):
-    """按勾选渠道推送，返回 {渠道: 成功数}。"""
+def _dispatch(params, base_url, token, title, text, updates, event,
+              poster=None):
+    """按勾选渠道推送，返回 {渠道: 成功数}。poster 取第一条更新的海报。"""
     channels = params.get("push_channels") or []
     if isinstance(channels, str):
         channels = [channels] if channels else []
     results = {}
     if "tg" in channels:
         pairs = _resolve_bot(base_url, token)
-        results["tg"] = (_send_tg(pairs, text, _resolve_proxy(base_url, token))
+        results["tg"] = (_send_tg(pairs, text, _resolve_proxy(base_url, token),
+                                  poster)
                          if pairs else 0)
     if "feishu" in channels:
         urls = _split_lines(params.get("feishu_webhook"))
-        results["feishu"] = _send_feishu(urls, text) if urls else 0
+        results["feishu"] = (_send_feishu(urls, text, poster) if urls else 0)
         if not urls:
             print("飞书：未配置 Webhook 地址，跳过")
     if "webhook" in channels:
         urls = _split_lines(params.get("generic_webhooks"))
         if urls:
             payload = {"plugin": "anime-update-push", "event": event,
-                       "title": title, "text": text, "updates": updates}
+                       "title": title, "text": text, "updates": updates,
+                       "poster": poster}
             results["webhook"] = _send_webhooks(urls, text, payload)
         else:
             print("Webhook：未配置地址，跳过")
@@ -587,17 +614,139 @@ def _handle_remove(params, store, data_dir):
                     "style": {"tone": "muted"}}] + _render_subs_ui(store)}
 
 
-def _handle_test_push(params, eff, base_url, token):
-    text = "📢 追剧推送测试\n\n这是一条测试消息，收到即渠道配置正确。\n" \
-           + time.strftime("%Y-%m-%d %H:%M:%S")
-    results = _dispatch(eff, base_url, token, "追剧推送测试", text, [],
-                        "test")
+def _find_still(obj):
+    """深度查找剧集剧照（still_path），找不到再退回海报。"""
+    for want in ("still", "poster"):
+        def walk(node):
+            if isinstance(node, dict):
+                for key, val in node.items():
+                    if want in str(key).lower() and isinstance(val, str) \
+                            and val.strip():
+                        v = val.strip()
+                        if v.startswith("http"):
+                            return v
+                        if v.startswith("/"):
+                            return "https://image.tmdb.org/t/p/w500" + v
+                    if isinstance(val, (dict, list)):
+                        r = walk(val)
+                        if r:
+                            return r
+            elif isinstance(node, list):
+                for item in node:
+                    r = walk(item)
+                    if r:
+                        return r
+            return None
+        r = walk(obj)
+        if r:
+            return r
+    return None
+
+
+def _fetch_still(base_url, token, tmdb_id, season, episode, cache):
+    """取该集剧照；缺季号/集号时退海报。带本次运行内缓存。"""
+    key = f"{tmdb_id}:{season}:{episode}"
+    if key in cache:
+        return cache[key]
+    url = None
+    try:
+        if isinstance(season, int) and isinstance(episode, int):
+            resp = _api_call(
+                base_url, token, "GET",
+                f"/api/media/details/tmdb/tv/{tmdb_id}/season/{season}")
+            for ep in _walk_lists(resp.json()):
+                if isinstance(ep, dict) and ep.get("episode_number") == episode:
+                    st = ep.get("still_path")
+                    if isinstance(st, str) and st.strip():
+                        url = ("https://image.tmdb.org/t/p/w500" + st.strip()
+                               if st.startswith("/")
+                               else st.strip())
+                    break
+    except Exception:  # noqa: BLE001
+        pass
+    if url is None:
+        try:
+            resp = _api_call(base_url, token, "GET",
+                             f"/api/media/details/tmdb/tv/{tmdb_id}")
+            url = _find_still(resp.json())
+        except Exception:  # noqa: BLE001
+            pass
+    cache[key] = url
+    return url
+
+
+def _walk_lists(obj):
+    """深度遍历，yield 所有 dict 节点。"""
+    if isinstance(obj, dict):
+        yield obj
+        for v in obj.values():
+            yield from _walk_lists(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            yield from _walk_lists(item)
+
+
+def _handle_test_push(params, eff, base_url, token, data_dir=None):
+    """试推送 = 推一条真实档期数据（含海报），格式与正式推送完全一致。"""
+    days = int(eff.get("days") or 7)
+    subs = _load_sub_store(data_dir) if data_dir else {}
+    sub_ids = {v.get("tmdb_id") for v in subs.values() if v.get("tmdb_id")}
+    sample_updates, poster = [], None
+    if sub_ids:
+        try:
+            query = f"/api/media/calendar?days={days}"
+            kind = (eff.get("kind") or "").strip()
+            if kind:
+                query += "&kind=" + requests.utils.quote(kind)
+            cal = _api_call(base_url, token, "GET", query).json()
+            entries = []
+            _collect_calendar_entries(cal, entries)
+            cache = {}
+            for e in entries:
+                if e.get("tmdb_id") not in sub_ids:
+                    continue
+                season = e.get("season")
+                ep = ((f"S{season:02d}" if season else "S??")
+                      + f"E{e['episode']:02d}")
+                sample_updates.append({"key": e.get("tmdb_id"), "title": e["title"],
+                                       "label": ep, "date": e.get("date", ""),
+                                       "time": e.get("time", ""),
+                                       "tmdb_id": e.get("tmdb_id"),
+                                       "season": e.get("season"),
+                                       "episode": e["episode"]})
+                if len(sample_updates) >= 3:
+                    break
+            if sample_updates:
+                s0 = sample_updates[0]
+                poster = _fetch_still(base_url, token, s0["tmdb_id"],
+                                      s0.get("season"), s0.get("episode"),
+                                      cache)
+        except Exception as exc:  # noqa: BLE001
+            print(f"试推送：读取日历失败，退回纯文本测试：{exc}")
+    if sample_updates:
+        lines = ["📺 追剧推送预览（真实档期数据）", ""]
+        for u in sample_updates:
+            t = (f"（{u['time']}）" if u.get("time") else
+                 (f"（{u['date']}）" if u.get("date") else ""))
+            lines.append(f"✅ {u['title']} {u['label']}{t}")
+        text = "\n".join(lines)
+        title, event = "追剧推送预览", "test_real"
+    else:
+        text = "📢 追剧推送测试\n\n这是渠道测试消息（暂无订阅剧集的档期数据）。\n" \
+               + time.strftime("%Y-%m-%d %H:%M:%S")
+        title, event = "追剧推送测试", "test"
+    results = _dispatch(eff, base_url, token, title, text, sample_updates,
+                        event, poster)
     rows = [[ch, f"{n} 条成功" if n else "未发送/失败",
              "✅" if n else "⚠️"] for ch, n in results.items()] or \
         [["（未勾选任何渠道）", "-", "-"]]
-    return {"summary": {"mode": "test_push", "results": results},
+    note = ("已按真实档期数据推送" + ("（含海报）" if poster else ""))
+    if not sample_updates:
+        note = "订阅暂无近期档期，已发送纯文本测试"
+    return {"summary": {"mode": "test_push", "results": results,
+                        "sample_count": len(sample_updates)},
             "ui": [{"type": "alert",
-                    "text": "试推送完成，按各端实际收信情况确认。",
+                    "text": f"试推送完成：{note}。按各端实际收信情况确认。",
                     "style": {"tone": "success" if any(results.values())
                               else "warning"}},
                    {"type": "table", "label": "渠道结果",
@@ -746,7 +895,7 @@ def run(params, context):
     if mode == "remove":
         return _handle_remove(params, store, data_dir)
     if mode == "test_push":
-        return _handle_test_push(params, eff, base_url, token)
+        return _handle_test_push(params, eff, base_url, token, data_dir)
     if mode == "save_config":
         defaults = {"days": 1, "kind": "", "minute_level": True, "tz_offset": 0,
                     "push_channels": ["tg", "feishu", "webhook"],
@@ -840,7 +989,10 @@ def run(params, context):
                        "date": e.get("date", "")}
         updates.append({"key": key, "name": hit, "title": e["title"],
                         "label": ep_label, "date": e.get("date", ""),
-                        "time": e.get("time", "")})
+                        "time": e.get("time", ""),
+                        "tmdb_id": e.get("tmdb_id"),
+                        "season": e.get("season"),
+                        "episode": e["episode"]})
 
     # 4. 推送
     if updates:
@@ -852,8 +1004,15 @@ def run(params, context):
         if len(updates) > 15:
             lines.append(f"…另有 {len(updates) - 15} 条")
         text = "\n".join(lines)
+        poster_cache = {}
+        for u in updates[:3]:  # 最多取前 3 条的剧照，TG 用第一条
+            u["still"] = _fetch_still(base_url, token, u.get("tmdb_id"),
+                                      u.get("season"), u.get("episode"),
+                                      poster_cache)
+        poster = next((u["still"] for u in updates[:3] if u.get("still")),
+                      None)
         results = _dispatch(eff, base_url, token, "追剧更新", text,
-                            updates, "episode_update")
+                            updates, "episode_update", poster)
         print("推送结果:", results)
 
     if len(pushed) > 3000:
