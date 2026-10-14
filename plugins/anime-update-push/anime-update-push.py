@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.10.0",
+    "version": "1.10.1",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -45,10 +45,7 @@ PLUGIN_MANIFEST = {
                  "params": {"mode": "test_push"},
                  "style": {"tone": "warning"}},
             ]},
-            {"type": "grid", "columns": 3, "children": [
-                {"type": "button", "label": "💾 保存当前配置（供定时计划共享）",
-                 "action": "run", "params": {"mode": "save_config"},
-                 "style": {"tone": "primary", "variant": "outline"}},
+            {"type": "grid", "columns": 2, "children": [
                 {"type": "button", "label": "⏳ 查看待推送", "action": "run",
                  "params": {"mode": "run"},
                  "style": {"tone": "muted", "variant": "outline"}},
@@ -88,7 +85,6 @@ PLUGIN_MANIFEST = {
                 {"label": "添加订阅", "value": "add"},
                 {"label": "取消订阅", "value": "remove"},
                 {"label": "试推送", "value": "test_push"},
-                {"label": "保存当前配置", "value": "save_config"},
             ],
             "help": "一般不用手动改：用表单/结果页按钮操作即可。",
         },
@@ -1244,10 +1240,7 @@ def run(params, context):
             {"type": "button", "label": "🔍 搜索 TMDB 添加订阅",
              "action": "run", "params": {"mode": "search"},
              "style": {"tone": "primary"}},
-            {"type": "grid", "columns": 3, "children": [
-                {"type": "button", "label": "💾 保存当前配置（供定时计划共享）",
-                 "action": "run", "params": {"mode": "save_config"},
-                 "style": {"tone": "primary", "variant": "outline"}},
+            {"type": "grid", "columns": 2, "children": [
                 {"type": "button", "label": "📢 试推送", "action": "run",
                  "params": {"mode": "test_push"},
                  "style": {"tone": "warning", "variant": "outline"}},
