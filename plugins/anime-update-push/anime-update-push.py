@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.12.3",
+    "version": "1.12.4",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -397,8 +397,6 @@ def _send_tg(pairs, text, proxies, poster=None):
 
 def _send_feishu(urls, text, poster=None):
     text = _strip_tags(text)
-    if poster:
-        text = text + f"\n\n海报：{poster}"
     ok = 0
     for url in urls:
         try:
@@ -838,10 +836,11 @@ def _fetch_rich(base_url, token, tmdb_id, tmdb_key, tmdb_proxies, cache):
         return {}
     if tmdb_id in cache:
         return cache[tmdb_id]
-    data = _tmdb_api(
-        tmdb_key,
-        f"/tv/{tmdb_id}" + "?append_to_response=credits",
-        tmdb_proxies) or {}
+    data = _tmdb_api(tmdb_key, f"/tv/{tmdb_id}", tmdb_proxies) or {}
+    credits = _tmdb_api(
+        tmdb_key, f"/tv/{tmdb_id}/credits", tmdb_proxies) or {}
+    if isinstance(credits, dict) and credits.get("cast") is not None:
+        data["credits"] = credits
     rich = {}
     try:
         cb = data.get("created_by") or []
