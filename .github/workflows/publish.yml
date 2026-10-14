@@ -101,7 +101,7 @@ jobs:
         run: |
           set -e
           python3 - "$PLUGIN_ID" "$VERSION" "$TAG" "$ASSET" "$SHA" "$SIZE" <<'PY'
-          import json, sys
+          import ast, json, sys
           from pathlib import Path
 
           plugin_id, version, tag, asset, sha, size = sys.argv[1:7]
@@ -109,23 +109,43 @@ jobs:
           f = Path("plugins.json")
           data = json.loads(f.read_text(encoding="utf-8")) if f.exists() else \
               {"schema_version": 1, "plugins": []}
+
+          # 从插件清单（PLUGIN_MANIFEST 字典字面量 / plugin.json）读元数据
+          manifest = None
+          pj = Path(f"plugins/{plugin_id}/plugin.json")
+          if pj.exists():
+              manifest = json.loads(pj.read_text(encoding="utf-8"))
+          else:
+              for pf in Path(f"plugins/{plugin_id}").glob("*.py"):
+                  tree = ast.parse(pf.read_text(encoding="utf-8"))
+                  for node in tree.body:
+                      if isinstance(node, ast.Assign) and \
+                         getattr(node.targets[0], "id", "") == "PLUGIN_MANIFEST":
+                          manifest = ast.literal_eval(node.value)
+                          break
+              assert manifest, "缺少 plugin.json 或 PLUGIN_MANIFEST"
+
+          prev = next(
+              (p for p in data["plugins"] if p["id"] == plugin_id), {})
           entry = {
               "id": plugin_id,
-              "name": "",
-              "description": "",
-              "author": "",
+              "name": manifest.get("name") or prev.get("name", ""),
+              "description": manifest.get("description")
+                  or prev.get("description", ""),
+              "author": manifest.get("author") or prev.get("author", ""),
               "version": version,
-              "category": "网盘工具",
+              "category": prev.get("category", "网盘工具"),
               "homepage": f"https://github.com/{repo}",
               "download_url":
                   f"https://github.com/{repo}/releases/download/{tag}/{asset}",
               "sha256": sha,
               "size": int(size),
-              "python_requires": ">=3.10",
-              "requirements": ["requests>=2.32", "bencodepy>=0.9"],
+              "python_requires": prev.get("python_requires", ">=3.10"),
+              "requirements": prev.get("requirements", []),
               "status": "active",
-              "notice": "",
+              "notice": prev.get("notice", ""),
           }
+          assert entry["name"], "清单缺少 name"
           plugins = [p for p in data["plugins"] if p["id"] != plugin_id]
           plugins.append(entry)
           data["plugins"] = plugins

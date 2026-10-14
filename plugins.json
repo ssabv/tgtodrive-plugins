@@ -22,22 +22,21 @@
     },
     {
       "id": "anime-update-push",
-      "name": "",
-      "description": "",
-      "author": "",
+      "name": "追剧更新推送",
+      "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook（支持多个），持久去重。需 OpenAPI 凭据。",
+      "author": "ssabv",
       "version": "1.5.1",
-      "category": "网盘工具",
+      "category": "媒体工具",
       "homepage": "https://github.com/ssabv/tgtodrive-plugins",
       "download_url": "https://github.com/ssabv/tgtodrive-plugins/releases/download/anime-update-push-v1.5.1/anime-update-push.py",
       "sha256": "1d3249006a3e49781e47c371885bfbf915803d01a286a49236e6e2d51531ac3d",
       "size": 38510,
       "python_requires": ">=3.10",
       "requirements": [
-        "requests>=2.32",
-        "bencodepy>=0.9"
+        "requests>=2.32"
       ],
       "status": "active",
-      "notice": ""
+      "notice": "需要容器内已安装 requests（官方镜像自带）；使用前在 OpenAPI 页面创建凭据并在插件表单填写。"
     }
   ]
 }
