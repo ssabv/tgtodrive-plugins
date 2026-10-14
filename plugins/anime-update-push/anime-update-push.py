@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.3.0",
+    "version": "1.3.1",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -609,11 +609,18 @@ def _collect_calendar_entries(obj, entries, ctx=None, depth=0):
             if DATE_KEY_RE.match(str(key)) and isinstance(val, list):
                 ctx = dict(ctx, date=str(key)[:10])
         # 日期来源 B：date / air_date 等字段值为日期字符串（当天列表结构）
-        for k in ("date", "air_date", "update_date", "day"):
+        for k in ("date", "air_date", "update_date", "day",
+                  "calendar_date", "release_date"):
             v = lower.get(k)
             if isinstance(v, str) and DATE_KEY_RE.match(v.strip()):
                 ctx = dict(ctx, date=v.strip()[:10])
                 break
+        # 日期来源 C：calendar_episode.air_date 嵌套
+        ce = lower.get("calendar_episode")
+        if isinstance(ce, dict):
+            v = ce.get("air_date")
+            if isinstance(v, str) and DATE_KEY_RE.match(v.strip()) and "date" not in ctx:
+                ctx = dict(ctx, date=v.strip()[:10])
         tid = None
         for k in ("tmdb_id", "tmdbid", "tmdb"):
             if k in lower and isinstance(lower[k], (int, str)):
@@ -641,28 +648,58 @@ def _collect_calendar_entries(obj, entries, ctx=None, depth=0):
                 season = int(lower[k])
                 break
         air_time = None
+        dt_local = None
+        # 精确时刻：ISO 时间字段（如 first_aired "2026-10-14T04:00:00Z"）→ 转本地时区
         for k, v in lower.items():
-            if TIME_KEY_RE.search(k) and isinstance(v, str) \
-                    and TIME_VAL_RE.match(v.strip()):
-                air_time = v.strip()
-                break
+            if isinstance(v, str) and ("aired" in k or "datetime" in k):
+                mm = re.match(
+                    r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?$",
+                    v.strip())
+                if mm:
+                    try:
+                        dt = datetime.datetime.fromisoformat(
+                            v.strip().replace("Z", "+00:00"))
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=datetime.timezone.utc)
+                        dt_local = dt.astimezone()
+                        air_time = dt_local.strftime("%H:%M")
+                        ctx = dict(ctx, date=dt_local.strftime("%Y-%m-%d"))
+                        break
+                    except ValueError:
+                        pass
+        if air_time is None:
+            for k, v in lower.items():
+                if TIME_KEY_RE.search(k) and isinstance(v, str) \
+                        and TIME_VAL_RE.match(v.strip()):
+                    air_time = v.strip()
+                    break
 
         new_ctx = dict(ctx)
-        if title:
+        # 剧名优先级：外层（剧）> 内层（集名）；外层已有时不覆盖
+        if title and "title" not in ctx:
             new_ctx["title"] = title
         if tid is not None:
             new_ctx["tmdb_id"] = tid
         if season is not None:
             new_ctx["season"] = season
+        if air_time:
+            new_ctx["air_time"] = air_time
+        if dt_local is not None:
+            new_ctx["datetime_local"] = dt_local
 
         if episode is not None and ("title" in new_ctx or "tmdb_id" in new_ctx):
+            final_time = air_time or new_ctx.get("air_time")
+            final_dt = dt_local if dt_local is not None \
+                else new_ctx.get("datetime_local")
             entries.append({
                 "tmdb_id": new_ctx.get("tmdb_id"),
                 "title": new_ctx.get("title") or f"TMDB {new_ctx.get('tmdb_id')}",
                 "season": new_ctx.get("season"),
                 "episode": episode,
-                "date": ctx.get("date", ""),
-                "time": air_time,
+                "date": new_ctx.get("date", ctx.get("date", "")),
+                "time": final_time,
+                "datetime_local": final_dt.strftime("%Y-%m-%d %H:%M")
+                if final_dt else "",
             })
         for key, val in obj.items():
             kl = str(key).lower()
@@ -747,13 +784,21 @@ def run(params, context):
         if key in pushed:
             continue
         expected = None
-        if minute_level and e.get("time") and e.get("date"):
-            try:
-                expected = datetime.datetime.strptime(
-                    f"{e['date']} {e['time']}", "%Y-%m-%d %H:%M"
-                ) + datetime.timedelta(hours=tz_offset)
-            except ValueError:
-                expected = None
+        if minute_level:
+            if e.get("datetime_local"):
+                try:
+                    expected = datetime.datetime.strptime(
+                        e["datetime_local"], "%Y-%m-%d %H:%M"
+                    ) + datetime.timedelta(hours=tz_offset)
+                except ValueError:
+                    expected = None
+            elif e.get("time") and e.get("date"):
+                try:
+                    expected = datetime.datetime.strptime(
+                        f"{e['date']} {e['time']}", "%Y-%m-%d %H:%M"
+                    ) + datetime.timedelta(hours=tz_offset)
+                except ValueError:
+                    expected = None
         if expected is not None and now < expected:
             pending.append({"key": key, "name": hit, "title": e["title"],
                             "label": ep_label,
