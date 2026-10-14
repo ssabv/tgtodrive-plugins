@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.8.2",
+    "version": "1.8.3",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -72,10 +72,10 @@ PLUGIN_MANIFEST = {
         },
         {
             "name": "tmdb_api_key",
-            "label": "TMDB API Key（可选）",
+            "label": "TMDB API Key（选填）",
             "type": "password",
             "default": "",
-            "help": "选填。填写后可直连 TMDB 取每集剧照（主程序未开「完整季集模式」时的兜底）；不填则尽力而为。",
+            "help": "留空即用内置公共 Key 直连 TMDB 取每集剧照；如公共 Key 失效可填自己的 v3 Key。",
         },
         {
             "name": "mode",
@@ -660,8 +660,9 @@ def _tmdb_api(tmdb_key, path, proxies):
 
 
 def _tmdb_cfg(eff, base_url, token):
-    """从配置取 TMDB Key 与代理 proxies 字典。"""
-    key = str((eff or {}).get("tmdb_api_key") or "").strip() or None
+    """从配置取 TMDB Key（留空用内置公共 Key）与代理 proxies 字典。"""
+    key = str((eff or {}).get("tmdb_api_key") or "").strip() \
+        or "3fd2be6f0c70a2a598f084ddfb75487c"
     proxies = None
     try:
         px = _resolve_proxy(base_url, token)
