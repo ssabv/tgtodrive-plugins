@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.8.3",
+    "version": "1.9.0",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -788,6 +788,54 @@ def _walk_lists(obj):
             yield from _walk_lists(item)
 
 
+def _fetch_details(base_url, token, tmdb_id, cache):
+    """取剧集详情（评分/年份/类型/简介），本次运行内缓存。"""
+    key = ("det", tmdb_id)
+    if key in cache:
+        return cache[key]
+    det = {}
+    try:
+        resp = _api_call(base_url, token, "GET",
+                         f"/api/media/details/tmdb/tv/{tmdb_id}")
+        d = resp.json()
+        if isinstance(d, dict) and isinstance(d.get("data"), dict):
+            d = d["data"]
+        if isinstance(d, dict):
+            det = d
+    except Exception:  # noqa: BLE001
+        pass
+    cache[key] = det
+    return det
+
+
+def _entry_text(u, det):
+    """单部番的推送文案（仿分享卡片样式）。"""
+    genres = [g for g in (det.get("genres") or []) if isinstance(g, str)]
+    kind = "动漫" if "动画" in genres else "电视剧"
+    title = det.get("title") or det.get("original_title") \
+        or u.get("title", "")
+    year = det.get("year") or ""
+    head = f"📺 {kind}｜{title}"
+    if year:
+        head += f"（{year}）"
+    lines = [head]
+    meta = []
+    score = det.get("score")
+    if isinstance(score, (int, float)) and score > 0:
+        meta.append(f"⭐️ 评分: {score}")
+    if genres:
+        meta.append("🎭 " + "/".join(genres[:4]))
+    if meta:
+        lines.append("  ".join(meta))
+    when = u.get("time") or u.get("date") or ""
+    lines.append(f"🎬 更新: {u.get('label', '')}"
+                 + (f"（{when}）" if when else ""))
+    ov = (det.get("overview") or "").strip()
+    if ov:
+        lines.append("📖 " + ov[:200] + ("…" if len(ov) > 200 else ""))
+    return "\n".join(lines)
+
+
 def _handle_test_push(params, eff, base_url, token, data_dir=None):
     """试推送 = 推一条真实档期数据（含海报），格式与正式推送完全一致。"""
     days = int(eff.get("days") or 7)
@@ -824,31 +872,33 @@ def _handle_test_push(params, eff, base_url, token, data_dir=None):
                                        "episode": e["episode"]})
                 if len(sample_updates) >= 3:
                     break
-            if sample_updates:
-                s0 = sample_updates[0]
-                poster = _fetch_still(base_url, token, s0["tmdb_id"],
-                                      s0.get("season"), s0.get("episode"),
-                                      cache, tmdb_key, tmdb_proxies)
         except Exception as exc:  # noqa: BLE001
             print(f"试推送：读取日历失败，退回纯文本测试：{exc}")
+    # 一部番一条推送（带各自剧照与简介）
+    results, any_still = {}, False
     if sample_updates:
-        lines = ["📺 追剧推送预览（真实档期数据）", ""]
+        dcache = {}
         for u in sample_updates:
-            t = (f"（{u['time']}）" if u.get("time") else
-                 (f"（{u['date']}）" if u.get("date") else ""))
-            lines.append(f"✅ {u['title']} {u['label']}{t}")
-        text = "\n".join(lines)
-        title, event = "追剧推送预览", "test_real"
+            det = _fetch_details(base_url, token, u.get("tmdb_id"), dcache)
+            text = _entry_text(u, det)
+            poster = _fetch_still(base_url, token, u.get("tmdb_id"),
+                                  u.get("season"), u.get("episode"),
+                                  cache, tmdb_key, tmdb_proxies)
+            u["still"] = poster
+            any_still = any_still or bool(poster)
+            r = _dispatch(eff, base_url, token, "追剧更新", text, [u],
+                          "test_real", poster)
+            for k, v in r.items():
+                results[k] = results.get(k, 0) + v
     else:
         text = "📢 追剧推送测试\n\n这是渠道测试消息（暂无订阅剧集的档期数据）。\n" \
                + time.strftime("%Y-%m-%d %H:%M:%S")
-        title, event = "追剧推送测试", "test"
-    results = _dispatch(eff, base_url, token, title, text, sample_updates,
-                        event, poster)
+        results = _dispatch(eff, base_url, token, "追剧推送测试", text, [],
+                            "test", None)
     rows = [[ch, f"{n} 条成功" if n else "未发送/失败",
              "✅" if n else "⚠️"] for ch, n in results.items()] or \
         [["（未勾选任何渠道）", "-", "-"]]
-    note = ("已按真实档期数据推送" + ("（含海报）" if poster else ""))
+    note = ("已按真实档期逐番推送" + ("（含剧照）" if any_still else ""))
     if not sample_updates:
         note = "订阅暂无近期档期，已发送纯文本测试"
     return {"summary": {"mode": "test_push", "results": results,
@@ -1105,29 +1155,23 @@ def run(params, context):
                         "label": ep_label, "date": e.get("date", ""),
                         "time": e.get("time", ""),
                         "tmdb_id": e.get("tmdb_id"),
-                        "season": e.get("season"),
+                        "season": season,
                         "episode": e["episode"]})
 
-    # 4. 推送
+    # 4. 推送：一部番一条消息（带各自剧照与简介）
     if updates:
-        lines = ["📺 追剧更新", ""]
-        for u in updates[:15]:
-            t = (f"（{u['time']}）" if u.get("time") else
-                 (f"（{u['date']}）" if u.get("date") else ""))
-            lines.append(f"✅ {u['title']} {u['label']}{t}")
-        if len(updates) > 15:
-            lines.append(f"…另有 {len(updates) - 15} 条")
-        text = "\n".join(lines)
-        poster_cache = {}
-        for u in updates[:3]:  # 最多取前 3 条的剧照，TG 用第一条
+        _det_cache = {}
+        _still_cache = {}
+        for u in updates:
+            det = _fetch_details(base_url, token, u.get("tmdb_id"),
+                                 _det_cache)
+            text = _entry_text(u, det)
             u["still"] = _fetch_still(base_url, token, u.get("tmdb_id"),
                                       u.get("season"), u.get("episode"),
-                                      poster_cache, _tmdb_key, _tmdb_proxies)
-        poster = next((u["still"] for u in updates[:3] if u.get("still")),
-                      None)
-        results = _dispatch(eff, base_url, token, "追剧更新", text,
-                            updates, "episode_update", poster)
-        print("推送结果:", results)
+                                      _still_cache, _tmdb_key, _tmdb_proxies)
+            r = _dispatch(eff, base_url, token, "追剧更新", text, [u],
+                          "episode_update", u.get("still"))
+            print(f"推送 {u['title']} {u['label']}: {r}")
 
     if len(pushed) > 3000:
         pushed = dict(sorted(pushed.items(),
