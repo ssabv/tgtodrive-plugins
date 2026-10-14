@@ -22,8 +22,8 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.5.1",
-    "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
+    "version": "1.6.0",
+    "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。零配置：凭据与运行设置全存插件数据目录，定时计划参数全部留空。",
     "author": "ssabv",
     "timeout": 120,
     "ui": {
@@ -31,92 +31,38 @@ PLUGIN_MANIFEST = {
         "layout": "stack",
             "components": [
             {"type": "alert",
-             "text": "选番：输入关键词点「搜索 TMDB」→ 结果页「➕ 订阅」。渠道/天数等配置在结果页「⚙️ 查看配置」里改（预设按钮或贴 JSON）。定时计划参数全留空即可，全部共享插件配置。",
+             "text": "首次使用：复制你的 OpenAPI Token（tgto_ 开头），贴进下方输入框点「🔑 保存凭据」，一次即可。之后：输入番名点「🔍 搜索 TMDB」→ 结果页「➕ 订阅」；配置点「⚙️ 查看配置」。定时计划参数全部留空。",
              "style": {"tone": "muted"}},
-            {"type": "field", "name": "search_query"},
-            {"type": "grid", "columns": 3, "children": [
+            {"type": "field", "name": "cmd",
+             "help": "首次：贴 Token（tgto_ 开头）点「保存凭据」；日常：输番名点搜索、贴配置 JSON 点「应用配置」；定时计划：此框必须留空。"},
+            {"type": "grid", "columns": 2, "children": [
                 {"type": "button", "label": "🔍 搜索 TMDB", "action": "run",
-                 "params": {"mode": "search"},
                  "style": {"tone": "primary"}},
                 {"type": "button", "label": "▶️ 检测更新", "action": "run",
-                 "params": {"mode": "run"},
+                 "params": {"cmd": "{\"mode\": \"run\"}"},
                  "style": {"tone": "success"}},
-                {"type": "button", "label": "📢 试推送", "action": "run",
-                 "params": {"mode": "test_push"},
-                 "style": {"tone": "warning"}},
             ]},
-            {"type": "grid", "columns": 3, "children": [
+            {"type": "grid", "columns": 4, "children": [
+                {"type": "button", "label": "📢 试推送", "action": "run",
+                 "params": {"cmd": "{\"mode\": \"test_push\"}"},
+                 "style": {"tone": "warning"}},
                 {"type": "button", "label": "⚙️ 查看配置", "action": "run",
-                 "params": {"mode": "show_config"},
+                 "params": {"cmd": "{\"mode\": \"show_config\"}"},
                  "style": {"tone": "muted", "variant": "outline"}},
                 {"type": "button", "label": "💾 应用配置", "action": "run",
-                 "params": {"mode": "apply_config"},
                  "style": {"tone": "primary", "variant": "outline"}},
+                {"type": "button", "label": "🔑 保存凭据", "action": "run",
+                 "style": {"tone": "danger", "variant": "outline"}},
             ]},
         ],
     },
     "inputs": [
         {
-            "name": "api_base_url",
-            "label": "服务地址",
-            "type": "text",
-            "default": "http://127.0.0.1:12366",
-            "help": "容器内可达的本服务地址；与运行接口同容器时用默认值即可。留空则读环境变量。",
-        },
-        {
-            "name": "openapi_token",
-            "label": "OpenAPI Token",
-            "type": "password",
-            "default": "",
-            "help": "在「实用工具 → OpenAPI」创建。可填在这里，也可配置环境变量，或在插件数据目录放 openapi.json。",
-        },
-        {
-            "name": "mode",
-            "label": "操作模式",
-            "type": "select",
-            "default": "run",
-            "options": [
-                {"label": "正常检测更新", "value": "run"},
-                {"label": "搜索 TMDB 选番", "value": "search"},
-                {"label": "添加订阅", "value": "add"},
-                {"label": "取消订阅", "value": "remove"},
-                {"label": "试推送", "value": "test_push"},
-                {"label": "查看配置", "value": "show_config"},
-                {"label": "应用配置", "value": "apply_config"},
-            ],
-            "help": "一般不用手动改：用表单/结果页按钮操作即可。",
-        },
-        {
-            "name": "search_query",
-            "label": "TMDB 搜索关键词",
-            "type": "text",
-            "default": "",
-            "placeholder": "输入番名后点「搜索 TMDB」按钮",
-        },
-        {
-            "name": "add_tmdb_id",
-            "label": "待添加 TMDB ID",
-            "type": "text",
-            "default": "",
-        },
-        {
-            "name": "add_title",
-            "label": "待添加标题",
-            "type": "text",
-            "default": "",
-        },
-        {
-            "name": "remove_key",
-            "label": "待移除订阅键",
-            "type": "text",
-            "default": "",
-        },
-        {
-            "name": "config_json",
-            "label": "配置 JSON（配合「应用配置」按钮）",
+            "name": "cmd",
+            "label": "内部指令（定时计划留空）",
             "type": "textarea",
             "default": "",
-            "help": "从结果页复制当前配置，改好后贴回这里点「应用配置」。字段：days 检查天数 / minute_level 分钟级到点 / tz_offset 时间校正小时 / push_channels 渠道列表(tg,feishu,webhook) / feishu_webhook 飞书地址数组 / generic_webhooks 通用地址数组。定时计划里此框必须留空。",
+            "help": "插件页：输入番名点「搜索 TMDB」，或贴配置 JSON 点「应用配置」。定时计划：此框必须留空。",
         },
     ],
 }
@@ -158,8 +104,11 @@ def _api_call(base_url, token, method, path, **kwargs):
     return resp
 
 
+DEFAULT_BASE_URL = "http://127.0.0.1:12366"
+
+
 def _resolve_api_config(params, data_dir):
-    """凭据优先级：表单 > 环境变量 > data_dir/openapi.json。"""
+    """凭据优先级：环境变量 > data_dir/openapi.json（表单不再承载凭据）。"""
     base_url = (params.get("api_base_url") or "").strip()
     token = (params.get("openapi_token") or "").strip()
     if not base_url:
@@ -175,10 +124,12 @@ def _resolve_api_config(params, data_dir):
             token = token or str(cfg.get("token") or "").strip()
         except (OSError, ValueError):
             pass
-    if not base_url or not token:
+    if not base_url:
+        base_url = DEFAULT_BASE_URL
+    if not token:
         raise ValueError(
-            "缺少服务地址或 OpenAPI Token：请在表单填写，或配置环境变量，"
-            "或在插件数据目录放 openapi.json"
+            "缺少 OpenAPI Token：请先在插件页点「🔑 保存凭据」按钮"
+            "（或在插件数据目录放 openapi.json / 配置环境变量 TGTO_OPENAPI_TOKEN）"
         )
     return base_url.rstrip("/"), token
 
@@ -434,7 +385,9 @@ def _render_subs_ui(store):
                            "style": {"tone": "muted", "size": "small"}},
                           {"type": "button", "label": "🗑 移除订阅",
                            "action": "run",
-                           "params": {"mode": "remove", "remove_key": key},
+                           "params": {"cmd": json.dumps(
+                               {"mode": "remove", "remove_key": key},
+                               ensure_ascii=False)},
                            "style": {"tone": "danger", "variant": "outline"}},
                       ]})
     for i in range(0, len(cards), 3):
@@ -502,13 +455,14 @@ def _handle_search(base_url, token, params, store):
              {"type": "text", "text": "🎬 " + c["title"],
               "style": {"align": "center"}}),
             {"type": "button", "label": "➕ 订阅", "action": "run",
-             "params": {"mode": "add", "add_tmdb_id": str(c["tmdb_id"]),
-                        "add_title": c["title"]},
+             "params": {"cmd": json.dumps(
+                 {"mode": "add", "add_tmdb_id": str(c["tmdb_id"]),
+                  "add_title": c["title"]}, ensure_ascii=False)},
              "style": {"tone": "primary"}},
         ]
         comps.append({"type": "card", "label": c["title"], "children": card})
-    comps.append({"type": "button", "label": "🔍 用表单关键词再搜一次",
-                  "action": "run", "params": {"mode": "search"},
+    comps.append({"type": "button", "label": "🔍 用输入框关键词再搜一次",
+                  "action": "run",
                   "style": {"tone": "primary"}})
     return {"summary": {"mode": "search", "query": q, "results": len(results)},
             "ui": comps + _render_subs_ui(store)}
@@ -726,12 +680,13 @@ def _handle_show_config(cfg):
     comps = [{"type": "heading", "text": "当前配置"},
              {"type": "code", "text": json.dumps(current, ensure_ascii=False, indent=2)},
              {"type": "alert",
-              "text": "改配置两种方式：① 点下面预设按钮一键切换渠道；② 把上面 JSON 复制到表单「配置 JSON」框，改好后点「应用配置」。",
+              "text": "改配置两种方式：① 点下面预设按钮一键切换渠道；② 把上面 JSON 复制到上方输入框，改好后点「💾 应用配置」。",
               "style": {"tone": "muted"}},
              {"type": "grid", "columns": 4, "children": [
                  {"type": "button", "label": label, "action": "run",
-                  "params": {"mode": "apply_config", "config_json":
-                             '{"push_channels": ' + channels},
+                  "params": {"cmd": json.dumps(
+                      {"mode": "apply_config", "config_json":
+                       '{"push_channels": ' + channels}, ensure_ascii=False)},
                   "style": {"tone": "primary", "variant": "outline"}}
                  for label, channels in presets]}]
     return {"summary": {"mode": "show_config", "config": current},
@@ -743,7 +698,7 @@ def _handle_apply_config(params, cfg, data_dir):
     if not raw:
         return {"summary": {"mode": "apply_config", "error": "配置 JSON 为空"},
                 "ui": [{"type": "alert",
-                        "text": "「配置 JSON」框是空的：把当前配置贴进去改好后再点应用，或直接用预设按钮。",
+                        "text": "上方输入框是空的：把当前配置贴进去改好后再点应用，或直接用预设按钮。",
                         "style": {"tone": "warning"}}]
                 + _handle_show_config(cfg)["ui"]}
     try:
@@ -761,31 +716,71 @@ def _handle_apply_config(params, cfg, data_dir):
             + _handle_show_config(new_cfg)["ui"]}
 
 
+def _handle_save_token(interactive, data_dir):
+    token = (interactive.get("token") or "").strip()
+    base = (interactive.get("base_url") or "").strip() or DEFAULT_BASE_URL
+    if not token:
+        raise ValueError(
+            "指令里没有 Token：请把 OpenAPI Token（tgto_ 开头）贴进输入框"
+            "后再点「🔑 保存凭据」")
+    _write_json(Path(data_dir) / "openapi.json",
+                {"base_url": base.rstrip("/"), "token": token})
+    return {"summary": {"mode": "save_token", "saved": True},
+            "ui": [{"type": "alert",
+                    "text": f"✅ 凭据已保存到插件数据目录（服务地址 {base}），"
+                            "定时计划与运行无需再填任何参数。",
+                    "style": {"tone": "success"}}]}
+
+
 # ---------- 主流程 ----------
 
 def run(params, context):
-    base_url, token = _resolve_api_config(params, context.get("data_dir", ""))
     data_dir = Path(context["data_dir"])
+
+    # 解析「指令」输入：纯文本=搜索关键词；带 mode 的 JSON=交互指令；
+    # 不带 mode 的 JSON=配置补丁；空=正常检测更新
+    raw = (params.get("cmd") or "").strip()
+    mode, interactive = "run", {}
+    if raw:
+        if raw.startswith("tgto_"):
+            mode, interactive = "save_token", {"token": raw}
+        elif raw.startswith("{"):
+            try:
+                parsed = json.loads(raw)
+            except ValueError as exc:
+                raise ValueError(f"指令 JSON 解析失败：{exc}")
+            if not isinstance(parsed, dict):
+                raise ValueError("指令 JSON 必须是对象")
+            if "mode" in parsed:
+                mode = str(parsed.pop("mode")).strip() or "run"
+                interactive = parsed
+            else:
+                mode, interactive = "apply_config", {"config_json": raw}
+        else:
+            mode, interactive = "search", {"search_query": raw}
+
+    if mode == "save_token":
+        return _handle_save_token(interactive, data_dir)
+
+    base_url, token = _resolve_api_config(interactive, str(data_dir))
 
     # 配置：全部来自 data_dir/config.json（表单参数不再承载运行配置，
     # 定时计划里填什么都不会影响运行）
     cfg = {**CONFIG_DEFAULTS, **_read_json(data_dir / "config.json", {})}
 
-    # 交互模式
-    mode = (params.get("mode") or "run").strip()
     store = _load_sub_store(data_dir)
     if mode == "search":
-        return _handle_search(base_url, token, params, store)
+        return _handle_search(base_url, token, interactive, store)
     if mode == "add":
-        return _handle_add(base_url, token, params, store, data_dir)
+        return _handle_add(base_url, token, interactive, store, data_dir)
     if mode == "remove":
-        return _handle_remove(params, store, data_dir)
+        return _handle_remove(interactive, store, data_dir)
     if mode == "test_push":
-        return _handle_test_push(params, cfg, base_url, token)
+        return _handle_test_push(interactive, cfg, base_url, token)
     if mode == "show_config":
         return _handle_show_config(cfg)
     if mode == "apply_config":
-        return _handle_apply_config(params, cfg, data_dir)
+        return _handle_apply_config(interactive, cfg, data_dir)
 
     days = int(cfg.get("days") or 1)
     kind = (cfg.get("kind") or "").strip()
@@ -920,12 +915,9 @@ def run(params, context):
             {"type": "button", "label": "🔍 搜索 TMDB 添加订阅",
              "action": "run", "params": {"mode": "search"},
              "style": {"tone": "primary"}},
-            {"type": "grid", "columns": 3, "children": [
-                {"type": "button", "label": "💾 保存当前配置（供定时计划共享）",
-                 "action": "run", "params": {"mode": "save_config"},
-                 "style": {"tone": "primary", "variant": "outline"}},
+            {"type": "grid", "columns": 2, "children": [
                 {"type": "button", "label": "📢 试推送", "action": "run",
-                 "params": {"mode": "test_push"},
+                 "params": {"cmd": "{\"mode\": \"test_push\"}"},
                  "style": {"tone": "warning", "variant": "outline"}},
             ]},
         ] + _render_subs_ui(store),
