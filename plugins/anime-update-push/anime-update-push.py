@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.6.0",
+    "version": "1.6.1",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。零配置：凭据与运行设置全存插件数据目录，定时计划参数全部留空。",
     "author": "ssabv",
     "timeout": 120,
@@ -637,14 +637,29 @@ CONFIG_DEFAULTS = {
 }
 
 
+def _normalize_json_text(s):
+    """容错归一化：全角/智能引号与标点 → ASCII，去掉尾逗号。"""
+    s = (s.replace("\u201c", '"').replace("\u201d", '"')
+          .replace("\u201e", '"').replace("\uff02", '"')
+          .replace("\u2018", "'").replace("\u2019", "'")
+          .replace("\uff0c", ",")   # ，
+          .replace("\uff1a", ":")   # ：
+          .replace("\u3001", ",")   # 、
+          )
+    s = re.sub(r",\s*([}\]])", r"\1", s)  # 尾逗号
+    return s
+
+
 def _merge_config(cfg, raw):
     """解析并校验用户提交的配置 JSON，合并返回新配置。"""
     try:
-        patch = json.loads(raw)
+        patch = json.loads(_normalize_json_text(raw))
         if not isinstance(patch, dict):
             raise ValueError("必须是 JSON 对象")
     except ValueError as exc:
-        raise ValueError(f"配置 JSON 解析失败：{exc}")
+        raise ValueError(
+            f"配置 JSON 解析失败：{exc}（常见原因：输入法把引号/逗号"
+            "转成了中文全角符号，可重新用英文标点粘贴）")
     new = dict(cfg)
     for k, v in patch.items():
         if k == "days":
@@ -656,6 +671,9 @@ def _merge_config(cfg, raw):
         elif k in ("tz_offset",):
             if not isinstance(v, (int, float)):
                 raise ValueError("tz_offset 必须是数字")
+        elif k == "kind":
+            if not isinstance(v, str):
+                raise ValueError("kind 必须是字符串")
         elif k == "push_channels":
             bad = [c for c in _as_list(v) if c not in ("tg", "feishu", "webhook")]
             if bad:
@@ -746,9 +764,11 @@ def run(params, context):
             mode, interactive = "save_token", {"token": raw}
         elif raw.startswith("{"):
             try:
-                parsed = json.loads(raw)
+                parsed = json.loads(_normalize_json_text(raw))
             except ValueError as exc:
-                raise ValueError(f"指令 JSON 解析失败：{exc}")
+                raise ValueError(
+                    f"指令 JSON 解析失败：{exc}（常见原因：输入法把引号/逗号"
+                    "转成了中文全角符号，可重新用英文标点粘贴）")
             if not isinstance(parsed, dict):
                 raise ValueError("指令 JSON 必须是对象")
             if "mode" in parsed:
