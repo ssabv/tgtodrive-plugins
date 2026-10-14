@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.11.5",
+    "version": "1.11.6",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -31,7 +31,8 @@ PLUGIN_MANIFEST = {
         "layout": "stack",
             "components": [
             {"type": "alert",
-             "text": "① 输入关键词，点「搜索 TMDB」 ② 点海报下「➕ 订阅」 ③ 点「试推送」验证渠道。配置填过一次自动保存，定时计划全部留空即可。",
+             "text": "订阅：输入关键词 →「搜索 TMDB」→ 运行日志里点「➕ 订阅」。
+定时：OpenAPI Token 必填（填一次自动保存）；定时任务表达式 */30 * * * *，参数留空。",
              "style": {"tone": "muted"}},
             {"type": "field", "name": "search_query"},
             {"type": "grid", "columns": 2, "children": [
