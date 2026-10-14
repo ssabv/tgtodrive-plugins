@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.11.6",
+    "version": "1.12.0",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -342,47 +342,61 @@ def _resolve_bot(base_url, token):
 
 def _send_tg(pairs, text, proxies, poster=None):
     ok = 0
+    plain = _strip_tags(text)
     for bot_token, chat_id in pairs:
         sent = False
         if poster:
-            # 先试带海报的 sendPhoto（caption 上限 1024 字符）
             try:
                 resp = requests.post(
                     f"https://api.telegram.org/bot{bot_token}/sendPhoto",
                     json={"chat_id": chat_id, "photo": poster,
                           "caption": text[:1000],
+                          "parse_mode": "HTML",
                           "disable_web_page_preview": True},
                     timeout=(10, 30), proxies=proxies,
                 )
                 if resp.status_code == 200:
                     sent = True
-                else:
-                    print(f"TG：带海报发送失败 HTTP {resp.status_code}，"
-                          "回退纯文本")
             except Exception as exc:  # noqa: BLE001
-                print(f"TG：带海报发送失败：{exc}，回退纯文本")
+                print(f"TG：带海报发送失败：{exc}")
+            if not sent:  # HTML 失败回退纯文本海报
+                try:
+                    resp = requests.post(
+                        f"https://api.telegram.org/bot{bot_token}/sendPhoto",
+                        json={"chat_id": chat_id, "photo": poster,
+                              "caption": plain[:1000],
+                              "disable_web_page_preview": True},
+                        timeout=(10, 30), proxies=proxies,
+                    )
+                    sent = resp.status_code == 200
+                except Exception as exc:  # noqa: BLE001
+                    print(f"TG：纯文本海报发送失败：{exc}")
+            if not sent:
+                print("TG：带海报发送失败，回退纯文本")
         if not sent:
             try:
                 resp = requests.post(
                     f"https://api.telegram.org/bot{bot_token}/sendMessage",
                     json={"chat_id": chat_id, "text": text,
+                          "parse_mode": "HTML",
                           "disable_web_page_preview": not poster},
                     timeout=(10, 30), proxies=proxies,
                 )
                 sent = resp.status_code == 200
-                if not sent:
-                    print(f"TG：发送失败 HTTP {resp.status_code} "
-                          f"{resp.text[:150]}")
+                if not sent:  # HTML 失败回退纯文本
+                    resp = requests.post(
+                        f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                        json={"chat_id": chat_id, "text": plain,
+                              "disable_web_page_preview": not poster},
+                        timeout=(10, 30), proxies=proxies,
+                    )
+                    sent = resp.status_code == 200
             except Exception as exc:  # noqa: BLE001
                 print(f"TG：发送失败：{exc}")
-        if sent:
-            ok += 1
-            print(f"TG：已发送到 chat {chat_id}"
-                  + ("（带海报）" if poster else ""))
     return ok
 
-
 def _send_feishu(urls, text, poster=None):
+    text = _strip_tags(text)
     if poster:
         text = text + f"\n\n海报：{poster}"
     ok = 0
@@ -445,7 +459,7 @@ def _dispatch(params, base_url, token, title, text, updates, event,
         urls = _split_lines(params.get("generic_webhooks"))
         if urls:
             payload = {"plugin": "anime-update-push", "event": event,
-                       "title": title, "text": text, "updates": updates,
+                       "title": title, "text": _strip_tags(text), "updates": updates,
                        "poster": poster}
             results["webhook"] = _send_webhooks(urls, text, payload)
         else:
@@ -818,31 +832,89 @@ def _fetch_details(base_url, token, tmdb_id, cache):
     return det
 
 
-def _entry_text(u, det):
-    """单部番的推送文案（仿分享卡片样式）。"""
+def _fetch_rich(base_url, token, tmdb_id, tmdb_key, tmdb_proxies, cache):
+    """从 TMDB 取卡片扩展信息：导演/主演/地区/季数/集数。失败返回 {}。"""
+    if not tmdb_id:
+        return {}
+    if tmdb_id in cache:
+        return cache[tmdb_id]
+    data = _tmdb_api(
+        tmdb_key,
+        f"/tv/{tmdb_id}" + "?append_to_response=credits",
+        tmdb_proxies) or {}
+    rich = {}
+    try:
+        cb = data.get("created_by") or []
+        director = "、".join(str(x.get("name")) for x in cb[:2] if x.get("name"))
+        if not director:
+            crew = ((data.get("credits") or {}).get("crew") or [])
+            director = "、".join(
+                str(x.get("name")) for x in crew
+                if x.get("job") == "Director") or "未知"
+        rich["director"] = director[:60]
+        cast = ((data.get("credits") or {}).get("cast") or [])
+        rich["cast"] = " / ".join(
+            str(x.get("name")) for x in cast[:3] if x.get("name"))
+        region = ((data.get("production_countries") or [{}])[0].get(
+            "iso_3166_1") or (data.get("origin_country") or [""])[0] or "")
+        rich["region"] = str(region).upper()
+        if data.get("number_of_seasons"):
+            rich["seasons"] = data.get("number_of_seasons")
+        if data.get("number_of_episodes"):
+            rich["episodes"] = data.get("number_of_episodes")
+    except Exception as exc:  # noqa: BLE001
+        print(f"TMDB 扩展信息解析失败：{exc}")
+    cache[tmdb_id] = rich
+    return rich
+
+
+def _html_escape(t):
+    return (str(t).replace("&", "&amp;")
+            .replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _strip_tags(t):
+    import re as _re
+    return _re.sub(r"</?blockquote[^>]*>", "", str(t))
+
+
+def _entry_text(u, det, rich=None):
+    """单部番的推送文案（仿分享卡片样式，TG 用 HTML 引用块收简介）。"""
+    rich = rich or {}
+    det = det or {}
     genres = [g for g in (det.get("genres") or []) if isinstance(g, str)]
     kind = "动漫" if "动画" in genres else "电视剧"
     title = det.get("title") or det.get("original_title") \
         or u.get("title", "")
     year = det.get("year") or ""
-    head = f"📺 {kind}｜{title}"
-    if year:
-        head += f"（{year}）"
-    lines = [head]
+    lines = [f"📺 {kind}｜{title}" + (f"（{year}）" if year else "")]
     meta = []
     score = det.get("score")
     if isinstance(score, (int, float)) and score > 0:
         meta.append(f"⭐️ 评分: {score}")
+    if rich.get("region"):
+        meta.append("地区: " + rich["region"])
     if genres:
-        meta.append("🎭 " + "/".join(genres[:4]))
+        meta.append("类型: " + "/".join(genres[:4]))
     if meta:
-        lines.append("  ".join(meta))
+        lines.append(" / ".join(meta))
+    lines.append("🎬 导演: " + (rich.get("director") or "未知"))
+    if rich.get("cast"):
+        lines.append("👥 主演: " + rich["cast"])
+    if rich.get("seasons"):
+        eps = rich.get("episodes")
+        lines.append(f"📺 共{rich['seasons']}季"
+                     + (f" ({eps}集)" if eps else ""))
     when = u.get("time") or u.get("date") or ""
     lines.append(f"🎬 更新: {u.get('label', '')}"
                  + (f"（{when}）" if when else ""))
     ov = ((det or {}).get("overview") or (u.get("overview") or "")).strip()
     if ov:
-        lines.append("📖 " + ov[:200] + ("…" if len(ov) > 200 else ""))
+        lines.append("📖 简介:")
+        lines.append("<blockquote expandable>"
+                     + _html_escape(ov[:600])
+                     + ("…" if len(ov) > 600 else "")
+                     + "</blockquote>")
     return "\n".join(lines)
 
 
@@ -888,9 +960,12 @@ def _handle_test_push(params, eff, base_url, token, data_dir=None):
     results, any_still = {}, False
     if sample_updates:
         dcache = {}
+        rcache = {}
         for u in sample_updates:
             det = _fetch_details(base_url, token, u.get("tmdb_id"), dcache)
-            text = _entry_text(u, det)
+            rich = _fetch_rich(base_url, token, u.get("tmdb_id"),
+                               tmdb_key, tmdb_proxies, rcache)
+            text = _entry_text(u, det, rich)
             poster = _fetch_still(base_url, token, u.get("tmdb_id"),
                                   u.get("season"), u.get("episode"),
                                   cache, tmdb_key, tmdb_proxies)
@@ -1223,14 +1298,17 @@ def run(params, context):
     if updates:
         _det_cache = {}
         _still_cache = {}
+        _rich_cache = {}
         for u in updates:
             det = _fetch_details(base_url, token, u.get("tmdb_id"),
                                  _det_cache) or {}
+            rich = _fetch_rich(base_url, token, u.get("tmdb_id"),
+                               _tmdb_key, _tmdb_proxies, _rich_cache)
             ck = _ck(u)
             cc = ccache.get(ck)
             if cc and not (det.get("overview") or "").strip()                     and cc.get("overview"):
                 det["overview"] = cc["overview"]
-            text = _entry_text(u, det)
+            text = _entry_text(u, det, rich)
             u["still"] = u.get("still") or _fetch_still(
                 base_url, token, u.get("tmdb_id"),
                 u.get("season"), u.get("episode"),
