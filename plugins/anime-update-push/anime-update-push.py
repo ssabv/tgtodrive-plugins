@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.9.6",
+    "version": "1.10.0",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -1061,6 +1061,19 @@ def run(params, context):
         if v is None or v == "" or v == []:
             continue
         eff[k] = v
+
+    # 配置自动持久化：本次运行带有效 Token 就自动快照（save_config 模式在下方自行保存）。
+    # 好处：表单跑一次 = 自动存档，之后定时计划无需再点「保存当前配置」。
+    if (params.get("mode") or "run") != "save_config" \
+            and str(eff.get("openapi_token") or "").strip():
+        snap = {k: eff.get(k) for k in (
+            "api_base_url", "openapi_token", "tmdb_api_key", "days",
+            "kind", "minute_level", "tz_offset", "push_channels",
+            "feishu_webhook", "generic_webhooks")}
+        cur = _read_json(data_dir / "config.json", {})
+        if cur != snap:
+            _write_json(data_dir / "config.json", snap)
+            print("配置已自动持久化（有变化）")
 
     # 交互模式
     mode = (params.get("mode") or "run").strip()
