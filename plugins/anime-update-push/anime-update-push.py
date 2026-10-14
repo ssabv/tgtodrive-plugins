@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.12.4",
+    "version": "1.12.5",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -905,7 +905,9 @@ def _entry_text(u, det, rich=None):
         lines.append(f"📺 共{rich['seasons']}季"
                      + (f" ({eps}集)" if eps else ""))
     when = u.get("time") or u.get("date") or ""
-    lines.append(f"🎬 更新: {u.get('label', '')}"
+    ep_no = u.get("episode")
+    ep_txt = f" 第{ep_no}集" if isinstance(ep_no, int) else ""
+    lines.append(f"🎬 更新: {u.get('label', '')}{ep_txt}"
                  + (f"（{when}）" if when else ""))
     ov = ((det or {}).get("overview") or (u.get("overview") or "")).strip()
     if ov:
