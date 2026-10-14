@@ -22,7 +22,7 @@ PLUGIN_MANIFEST = {
     "schema_version": 1,
     "id": "anime-update-push",
     "name": "追剧更新推送",
-    "version": "1.8.0",
+    "version": "1.8.1",
     "description": "订阅指定番剧/剧集（搜索 TMDB 海报点选订阅），按档期时间到点推送 Telegram / 飞书 / 通用 Webhook，持久去重。",
     "author": "ssabv",
     "timeout": 120,
@@ -643,14 +643,51 @@ def _find_still(obj):
     return None
 
 
+def _resolve_season(base_url, token, tmdb_id, episode, cache):
+    """季号缺失/为 0 时，从剧集详情推断真实季号：
+    在正季（season_number>=1）里选集数 >= episode 的最大季号，
+    没有则取最大正季号。结果缓存到本次运行。"""
+    key = f"season:{tmdb_id}:{episode}"
+    if key in cache:
+        return cache[key]
+    season = None
+    try:
+        resp = _api_call(base_url, token, "GET",
+                         f"/api/media/details/tmdb/tv/{tmdb_id}")
+        seasons = []
+        for node in _walk_lists(resp.json()):
+            if isinstance(node.get("seasons"), list):
+                for s in node["seasons"]:
+                    if not isinstance(s, dict):
+                        continue
+                    sn = s.get("season_number")
+                    ec = s.get("episode_count")
+                    if isinstance(sn, int) and sn >= 1:
+                        seasons.append(
+                            (sn, ec if isinstance(ec, int) else 0))
+                break
+        if seasons:
+            fit = [sn for sn, ec in seasons if ec >= episode > 0]
+            season = max(fit) if fit else max(sn for sn, _ in seasons)
+    except Exception:  # noqa: BLE001
+        pass
+    cache[key] = season
+    return season
+
+
 def _fetch_still(base_url, token, tmdb_id, season, episode, cache):
-    """取该集剧照；缺季号/集号时退海报。带本次运行内缓存。"""
+    """取该集剧照；季号缺失/为 0 时先推断季号，仍失败再退海报。"""
     key = f"{tmdb_id}:{season}:{episode}"
     if key in cache:
         return cache[key]
+    if not (isinstance(season, int) and season > 0):
+        season = _resolve_season(base_url, token, tmdb_id,
+                                 episode if isinstance(episode, int) else 0,
+                                 cache)
     url = None
     try:
-        if isinstance(season, int) and isinstance(episode, int):
+        if isinstance(season, int) and season > 0 \
+                and isinstance(episode, int):
             resp = _api_call(
                 base_url, token, "GET",
                 f"/api/media/details/tmdb/tv/{tmdb_id}/season/{season}")
@@ -706,13 +743,17 @@ def _handle_test_push(params, eff, base_url, token, data_dir=None):
                 if e.get("tmdb_id") not in sub_ids:
                     continue
                 season = e.get("season")
+                if not (isinstance(season, int) and season > 0):
+                    season = _resolve_season(base_url, token,
+                                             e.get("tmdb_id"),
+                                             e["episode"], cache)
                 ep = ((f"S{season:02d}" if season else "S??")
                       + f"E{e['episode']:02d}")
                 sample_updates.append({"key": e.get("tmdb_id"), "title": e["title"],
                                        "label": ep, "date": e.get("date", ""),
                                        "time": e.get("time", ""),
                                        "tmdb_id": e.get("tmdb_id"),
-                                       "season": e.get("season"),
+                                       "season": season,
                                        "episode": e["episode"]})
                 if len(sample_updates) >= 3:
                     break
@@ -948,6 +989,7 @@ def run(params, context):
 
     # 3. 匹配订阅 + 分钟级到点判断 + 去重
     now = datetime.datetime.now()
+    _season_cache = {}
     updates, pending, matched = [], [], set()
     for e in entries:
         hit = None
@@ -959,6 +1001,9 @@ def run(params, context):
             continue
         matched.add(hit)
         season = e.get("season")
+        if not (isinstance(season, int) and season > 0):
+            season = _resolve_season(base_url, token, e.get("tmdb_id"),
+                                     e["episode"], _season_cache)
         ep_label = (f"S{season:02d}" if season else "S??") + f"E{e['episode']:02d}"
         key = f"{e.get('tmdb_id') or hit}|{ep_label}|{e.get('date', '')}"
         if key in pushed:
